@@ -228,6 +228,7 @@ $keysToBackup = @(
     "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization",
     "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config",
     "HKLM\SOFTWARE\Policies\Microsoft\Dsh",
+    "HKLM\SOFTWARE\Policies\Microsoft\Windows\SettingSync",
     "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
 )
 
@@ -288,6 +289,18 @@ Set-Dword $cloudHKLM "DisableWindowsSpotlightWindowsWelcomeExperience" 1
 Set-Dword $cloudHKLM "DisableTailoredExperiencesWithDiagnosticData" 1
 Set-Dword $cloudHKCU "DisableTailoredExperiencesWithDiagnosticData" 1
 
+Write-Step "Disabling Accounts > Windows Backup > Remember my apps"
+
+# Accounts > Windows backup > Remember my apps = Off
+# DisableAppSyncSettingSync 2 = enabled policy "Do not sync Apps".
+# UserOverride 1 = users cannot turn app syncing back on through Settings.
+Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableAppSyncSettingSync" 2
+Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableAppSyncSettingSyncUserOverride" 1
+
+# Compatibility with Windows builds / ADMX mappings that expose app-settings sync separately.
+Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableApplicationSettingSync" 2
+Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\SettingSync" "DisableApplicationSettingSyncUserOverride" 1
+
 Write-Step "Disabling Feedback and Diagnostics options"
 
 Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DataCollection" "AllowTelemetry" 1
@@ -331,6 +344,11 @@ Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "EnableDyna
 
 Set-Dword "HKCU:\Software\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
 Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
+
+Write-Step "Disabling File Explorer sync provider notifications"
+
+# Folder Options > View > Advanced settings > Show sync provider notifications = Off
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowSyncProviderNotifications" 0
 
 Write-Step "Disabling and stopping selected Windows services"
 
