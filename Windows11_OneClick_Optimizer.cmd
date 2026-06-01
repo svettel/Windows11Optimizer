@@ -444,6 +444,47 @@ foreach ($pattern in $appPatterns) {
     }
 }
 
+Write-Step "Removing Xbox, Xbox Identity Provider, Xbox Live, Game Bar, and Game Speech Window apps"
+
+# Stop related foreground/background processes before Appx removal.
+# This prevents removal failures when Xbox Game Bar or its helper processes are already running.
+$xboxGameProcessNames = @(
+    "GameBar",
+    "GameBarFTServer",
+    "GameBarPresenceWriter",
+    "XboxAppServices",
+    "XboxPcApp"
+)
+
+foreach ($processName in $xboxGameProcessNames) {
+    Get-Process -Name $processName -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+$xboxGameAppPatterns = @(
+    [pscustomobject]@{ Pattern = "*Microsoft.GamingApp*"; Description = "Xbox" },
+    [pscustomobject]@{ Pattern = "*Microsoft.XboxApp*"; Description = "Xbox legacy app" },
+    [pscustomobject]@{ Pattern = "*Microsoft.XboxIdentityProvider*"; Description = "Xbox Identity Provider" },
+    [pscustomobject]@{ Pattern = "*Microsoft.Xbox.TCUI*"; Description = "Xbox Live" },
+    [pscustomobject]@{ Pattern = "*Microsoft.XboxGamingOverlay*"; Description = "Game Bar" },
+    [pscustomobject]@{ Pattern = "*Microsoft.XboxGameOverlay*"; Description = "Game Bar overlay component" },
+    [pscustomobject]@{ Pattern = "*Microsoft.XboxSpeechToTextOverlay*"; Description = "Game Speech Window" }
+)
+
+foreach ($item in $xboxGameAppPatterns) {
+    $pattern = $item.Pattern
+    $description = $item.Description
+
+    Get-AppxPackage -AllUsers | Where-Object { $_.Name -like $pattern -or $_.PackageFullName -like $pattern } | ForEach-Object {
+        Write-Host "Remove-AppxPackage [$description]: $($_.Name)"
+        Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+    }
+
+    Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $pattern -or $_.PackageName -like $pattern } | ForEach-Object {
+        Write-Host "Remove-AppxProvisionedPackage [$description]: $($_.DisplayName)"
+        Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue | Out-Null
+    }
+}
+
 $RemoveWebExperiencePack = $false
 
 if ($RemoveWebExperiencePack) {

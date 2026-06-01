@@ -6,6 +6,7 @@ Recommended to reboot 메시지가 뜨면 재부팅을 수행하면 됩니다.
 피드백은 s_vettel@naver.com으로 부탁드립니다.
 
 업데이트(2026-05-31): Windows 백업의 내 앱 기억하기 비활성화와 파일 탐색기 동기화 공급자 알림 표시 비활성화 항목을 추가했습니다.
+업데이트(2026-06-01): Xbox, Xbox Identity Provider, Xbox Live, Game Bar, Game Speech Window 앱 제거 항목을 추가했습니다.
 
 ---
 
@@ -172,7 +173,43 @@ Xbox Game Bar 및 게임 관련 자동 기능을 비활성화합니다.
 
 ---
 
-## 10. 접근성 / 시각 효과 / 투명 효과 비활성화
+## 10. Xbox / Game Bar 관련 앱 제거
+
+`Program Files\WindowsApps` 아래에 설치되는 Xbox 및 Game Bar 관련 Appx 패키지를 제거합니다.
+
+제거 대상은 다음과 같습니다.
+
+| 항목 | Appx 패키지 패턴 |
+|---|---|
+| Xbox | `*Microsoft.GamingApp*` |
+| Xbox legacy app | `*Microsoft.XboxApp*` |
+| Xbox Identity Provider | `*Microsoft.XboxIdentityProvider*` |
+| Xbox Live | `*Microsoft.Xbox.TCUI*` |
+| Game Bar | `*Microsoft.XboxGamingOverlay*` |
+| Game Bar overlay component | `*Microsoft.XboxGameOverlay*` |
+| Game Speech Window | `*Microsoft.XboxSpeechToTextOverlay*` |
+
+처리 범위는 다음과 같습니다.
+
+- 현재 사용자 또는 시스템에 설치된 Appx 패키지 제거
+- Provisioned Appx 패키지 제거
+- Game Bar / Xbox 관련 프로세스가 실행 중인 경우 제거 전 강제 종료
+
+제거 전 종료 대상 프로세스는 다음과 같습니다.
+
+```text
+GameBar
+GameBarFTServer
+GameBarPresenceWriter
+XboxAppServices
+XboxPcApp
+```
+
+`Program Files\WindowsApps` 폴더를 직접 삭제하지 않고 Windows Appx 제거 명령을 사용합니다.
+
+---
+
+## 11. 접근성 / 시각 효과 / 투명 효과 비활성화
 
 Windows 개인 설정의 투명 효과를 비활성화합니다.
 
@@ -191,7 +228,7 @@ EnableTransparency = 0
 
 ---
 
-## 11. 파일 탐색기 / 폴더 옵션 / 동기화 공급자 알림 비활성화
+## 12. 파일 탐색기 / 폴더 옵션 / 동기화 공급자 알림 비활성화
 
 파일 탐색기의 폴더 옵션에서 동기화 공급자 알림 표시 기능을 비활성화합니다.
 
@@ -215,7 +252,7 @@ ShowSyncProviderNotifications = 0
 
 ---
 
-## 12. 잠금 화면 추천 / 팁 / 상태 표시 비활성화
+## 13. 잠금 화면 추천 / 팁 / 상태 표시 비활성화
 
 잠금 화면에서 표시되는 추천 콘텐츠, 팁, Spotlight 관련 기능을 비활성화합니다.
 
@@ -229,7 +266,7 @@ ShowSyncProviderNotifications = 0
 
 ---
 
-## 13. 작업 표시줄 위젯 비활성화
+## 14. 작업 표시줄 위젯 비활성화
 
 Windows 11 작업 표시줄 및 정책 설정을 통해 위젯 기능을 비활성화합니다.
 
@@ -247,7 +284,7 @@ TaskbarDa = 0
 
 ---
 
-## 14. 날씨 / 뉴스 앱 제거
+## 15. 날씨 / 뉴스 앱 제거
 
 Windows 기본 앱 중 날씨 및 뉴스 관련 Appx 패키지를 제거합니다.
 
