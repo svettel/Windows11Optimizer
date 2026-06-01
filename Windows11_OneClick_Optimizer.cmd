@@ -379,7 +379,7 @@ Write-Step "Applying power mode fallback settings"
 
 Invoke-PowerCfg "/setactive" "SCHEME_BALANCED"
 
-Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMIN" "100"
+Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMIN" "5"
 Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMAX" "100"
 Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PERFEPP" "0"
 

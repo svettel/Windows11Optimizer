@@ -5,8 +5,13 @@ Recommended to reboot 메시지가 뜨면 재부팅을 수행하면 됩니다.
 
 피드백은 s_vettel@naver.com으로 부탁드립니다.
 
+
+
+업데이트(2026-06-01): Xbox, Xbox Identity Provider, Xbox Live, Game Bar, Game Speech Window 앱 제거 항목을 추가했습니다. CPU 클럭이 최대 클럭에서 고정되는 현상을 해소했습니다.
+
 업데이트(2026-05-31): Windows 백업의 내 앱 기억하기 비활성화와 파일 탐색기 동기화 공급자 알림 표시 비활성화 항목을 추가했습니다.
-업데이트(2026-06-01): Xbox, Xbox Identity Provider, Xbox Live, Game Bar, Game Speech Window 앱 제거 항목을 추가했습니다.
+
+
 
 ---
 
