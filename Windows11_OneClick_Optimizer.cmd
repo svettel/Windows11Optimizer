@@ -357,6 +357,7 @@ $servicesToDisableAndStop = @(
     [pscustomobject]@{ Name = "SCardSvr"; DisplayName = "Smart Card" },
     [pscustomobject]@{ Name = "ScDeviceEnum"; DisplayName = "Smart Card Device Enumeration Service" },
     [pscustomobject]@{ Name = "SCPolicySvc"; DisplayName = "Smart Card Removal Policy" },
+    [pscustomobject]@{ Name = "CertPropSvc"; DisplayName = "Certificate Propagation" },
     [pscustomobject]@{ Name = "WSearch"; DisplayName = "Windows Search" },
     [pscustomobject]@{ Name = "SEMgrSvc"; DisplayName = "Payments and NFC/SE Manager" }
 )
@@ -379,7 +380,7 @@ Write-Step "Applying power mode fallback settings"
 
 Invoke-PowerCfg "/setactive" "SCHEME_BALANCED"
 
-Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMIN" "5"
+Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMIN" "100"
 Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMAX" "100"
 Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PERFEPP" "0"
 
@@ -471,6 +472,31 @@ $xboxGameAppPatterns = @(
 )
 
 foreach ($item in $xboxGameAppPatterns) {
+    $pattern = $item.Pattern
+    $description = $item.Description
+
+    Get-AppxPackage -AllUsers | Where-Object { $_.Name -like $pattern -or $_.PackageFullName -like $pattern } | ForEach-Object {
+        Write-Host "Remove-AppxPackage [$description]: $($_.Name)"
+        Remove-AppxPackage -Package $_.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+    }
+
+    Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like $pattern -or $_.PackageName -like $pattern } | ForEach-Object {
+        Write-Host "Remove-AppxProvisionedPackage [$description]: $($_.DisplayName)"
+        Remove-AppxProvisionedPackage -Online -PackageName $_.PackageName -ErrorAction SilentlyContinue | Out-Null
+    }
+}
+
+
+Write-Step "Removing Family, Solitaire and Casual Games, and Feedback Hub apps"
+
+$additionalConsumerAppPatterns = @(
+    [pscustomobject]@{ Pattern = "*MicrosoftCorporationII.MicrosoftFamily*"; Description = "Family" },
+    [pscustomobject]@{ Pattern = "*MicrosoftFamily*"; Description = "Family" },
+    [pscustomobject]@{ Pattern = "*Microsoft.MicrosoftSolitaireCollection*"; Description = "Solitaire and Casual Games" },
+    [pscustomobject]@{ Pattern = "*Microsoft.WindowsFeedbackHub*"; Description = "Feedback Hub" }
+)
+
+foreach ($item in $additionalConsumerAppPatterns) {
     $pattern = $item.Pattern
     $description = $item.Description
 
