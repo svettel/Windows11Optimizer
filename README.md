@@ -17,10 +17,22 @@ Recommended to reboot 메시지가 뜨면 재부팅을 수행하면 됩니다.
 ### 랩탑
 갤럭시 북6 프로 Core Ultra X7 358H 32GB, Windows 11 Pro x64
 
-서피스 프로 11 Snapdragon X Plus, Windows 11 Home
+서피스 프로 11 Snapdragon X Plus 16GB, Windows 11 Home
+
+서피스 프로 9 i5-1235u 16GB, Windows 11 Home
 
 ### 데스크탑
 Core Ultra 7 270k Plus 32GB 5600MHz, Windows 11 Pro
+
+---
+## 벤치마크 결과 비교(Geekbench 6 기준)
+Surface Pro 9  
+https://browser.geekbench.com/v6/cpu/8716178 - 최적화 전 벤치마크(8123)  
+https://browser.geekbench.com/v6/cpu/8809756 - 최적화 후 벤치마크(9157, 12.7% 상승)  
+  
+Surface Pro 11, Snapdragon X Plus  
+https://browser.geekbench.com/v6/cpu/8257745 - 최적화 전 벤치마크(12649)  
+https://browser.geekbench.com/v6/cpu/8811750 - 최적화 후 벤치마크(13368, 5.7% 상승)  
 
 ---
 
