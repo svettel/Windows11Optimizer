@@ -5,6 +5,8 @@ Recommended to reboot 메시지가 뜨면 재부팅을 수행하면 됩니다.
 
 피드백은 s_vettel@naver.com으로 부탁드립니다.
 
+업데이트(2026-06-05): Widgets 비활성화는 TaskbarDa 직접 수정 없이 HKLM 정책값만 적용하도록 정리했습니다.
+
 업데이트(2026-06-04): Certificate Propagation 서비스 비활성화와 Family, Solitaire & Casual Games, Feedback Hub 앱 제거 항목을 추가했습니다.
 
 업데이트(2026-06-01): Xbox, Xbox Identity Provider, Xbox Live, Game Bar, Game Speech Window 앱 제거 항목을 추가했습니다.

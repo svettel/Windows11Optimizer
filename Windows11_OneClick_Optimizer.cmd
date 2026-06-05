@@ -61,6 +61,45 @@ function Write-Step {
     Write-Host "[*] $Message" -ForegroundColor Cyan
 }
 
+function Get-ErrorText {
+    param([Parameter(Mandatory)][object]$ErrorRecord)
+
+    $message = ""
+
+    if ($null -ne $ErrorRecord.Exception -and -not [string]::IsNullOrWhiteSpace($ErrorRecord.Exception.Message)) {
+        $message = [string]$ErrorRecord.Exception.Message
+    }
+    else {
+        $message = [string]$ErrorRecord
+    }
+
+    # Native command stderr redirected through PowerShell can append this type name.
+    # It is not useful to the user and can make an ordinary access-denied message look ambiguous.
+    $message = $message -replace '\s*System\.Management\.Automation\.RemoteException\s*$', ''
+    $message = $message.Trim()
+
+    if ([string]::IsNullOrWhiteSpace($message)) {
+        return "Unknown error"
+    }
+
+    return $message
+}
+
+function Join-NativeOutput {
+    param([object[]]$Output)
+
+    if ($null -eq $Output) {
+        return ""
+    }
+
+    $text = ($Output | ForEach-Object { [string]$_ }) -join " "
+    $text = $text -replace '\s*System\.Management\.Automation\.RemoteException\s*', ' '
+    $text = $text -replace '\s+', ' '
+    return $text.Trim()
+}
+
+
+
 function Ensure-Key {
     param([Parameter(Mandatory)][string]$Path)
 
@@ -87,8 +126,7 @@ function Set-Dword {
         }
     }
     catch {
-        Write-Warning "Registry write failed: $Path\$Name = $Value"
-        Write-Warning $_.Exception.Message
+        Write-Warning "Registry write failed: $Path\$Name = $Value :: $(Get-ErrorText $_)"
     }
 }
 
@@ -110,8 +148,7 @@ function Set-String {
         }
     }
     catch {
-        Write-Warning "Registry write failed: $Path\$Name = $Value"
-        Write-Warning $_.Exception.Message
+        Write-Warning "Registry write failed: $Path\$Name = $Value :: $(Get-ErrorText $_)"
     }
 }
 
@@ -128,7 +165,7 @@ function Invoke-PowerCfg {
 
     $out = & powercfg.exe @Arguments 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning "powercfg failed: powercfg $($Arguments -join ' ') :: $out"
+        Write-Warning "powercfg failed: powercfg $($Arguments -join ' ') :: $(Join-NativeOutput $out)"
     }
 }
 
@@ -150,8 +187,7 @@ function Invoke-MMAgentEnable {
         }
     }
     catch {
-        Write-Warning "MMAgent configuration failed."
-        Write-Warning $_.Exception.Message
+        Write-Warning "MMAgent configuration skipped: $(Get-ErrorText $_)"
     }
 }
 
@@ -177,12 +213,11 @@ function Disable-AndStopService {
         Write-Host "StartupType Disabled: $label"
     }
     catch {
-        Write-Warning "Set-Service failed: $label"
-        Write-Warning $_.Exception.Message
+        Write-Warning "Set-Service failed: $label :: $(Get-ErrorText $_)"
 
         $out = & sc.exe config $Name start= disabled 2>&1
         if ($LASTEXITCODE -ne 0) {
-            Write-Warning "sc.exe config failed: $label :: $($out -join ' ')"
+            Write-Warning "sc.exe config failed: $label :: $(Join-NativeOutput $out)"
         }
         else {
             Write-Host "StartupType Disabled via sc.exe: $label"
@@ -200,8 +235,7 @@ function Disable-AndStopService {
         }
     }
     catch {
-        Write-Warning "Service stop failed: $label"
-        Write-Warning $_.Exception.Message
+        Write-Warning "Service stop failed: $label :: $(Get-ErrorText $_)"
     }
 }
 
@@ -416,13 +450,9 @@ Write-Step "Disabling taskbar Widgets"
 
 Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "AllowNewsAndInterests" 0
 Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "DisableWidgetsBoard" 1
-
-$taskbarDaOutput = & reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f 2>&1
-if ($LASTEXITCODE -ne 0) {
-    Write-Warning "TaskbarDa user toggle was skipped. Widgets policy is already applied."
-    Write-Warning ($taskbarDaOutput -join " ")
-}
-
+# Do not write HKCU/HKEY_USERS TaskbarDa directly. Current Windows 11 builds may protect this user toggle;
+# the HKLM Widgets policy above is the supported control path.
+Write-Warning "TaskbarDa user toggle was skipped. Widgets policy is already applied."
 
 Write-Step "Removing Weather and News apps"
 
