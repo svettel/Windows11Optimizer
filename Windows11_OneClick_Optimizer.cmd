@@ -12,12 +12,17 @@ set "__TEMPPS=%TEMP%\Apply-Win11-Setting_%RANDOM%%RANDOM%.ps1"
 fltmc >nul 2>&1
 if errorlevel 1 (
     echo Requesting administrator privileges...
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $p = $env:__SELF; $d = $env:__SELFDIR; $q = [char]34; Start-Process -FilePath $env:ComSpec -ArgumentList '/c', ($q + $p + $q) -WorkingDirectory $d -Verb RunAs; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $p = $env:__SELF; $d = $env:__SELFDIR; $q = [char]34; $args = @('/k','call',($q + $p + $q)); Start-Process -FilePath $env:ComSpec -ArgumentList $args -WorkingDirectory $d -Verb RunAs; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
     if errorlevel 1 (
         echo Failed to request administrator privileges or the request was cancelled.
         echo Press any key to close.
         pause >nul
+        exit /b 1
     )
+    echo Elevated administrator window was requested.
+    echo If a new administrator window did not open, run this file from an elevated Command Prompt.
+    echo Press any key to close this non-administrator window.
+    pause >nul
     exit /b
 )
 
@@ -47,6 +52,15 @@ exit /b %__RC%
 
 
 # POWERSHELL_START
+
+trap {
+    Write-Host ""
+    Write-Host "[FATAL] PowerShell payload stopped." -ForegroundColor Red
+    Write-Host ("[FATAL] " + $_.Exception.Message) -ForegroundColor Red
+    Write-Host "Press any key to close."
+    try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { }
+    exit 1
+}
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Continue"
@@ -152,6 +166,200 @@ function Set-String {
     }
 }
 
+function Set-Binary {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][byte[]]$Value
+    )
+
+    try {
+        Ensure-Key $Path
+
+        if (Get-ItemProperty -Path $Path -Name $Name -ErrorAction SilentlyContinue) {
+            Set-ItemProperty -Path $Path -Name $Name -Value $Value -ErrorAction Stop
+        }
+        else {
+            New-ItemProperty -Path $Path -Name $Name -Value $Value -PropertyType Binary -Force -ErrorAction Stop | Out-Null
+        }
+    }
+    catch {
+        $hex = ($Value | ForEach-Object { $_.ToString("X2") }) -join " "
+        Write-Warning "Registry write failed: $Path\$Name = $hex :: $(Get-ErrorText $_)"
+    }
+}
+
+function Ensure-User32Interop {
+    if ("Win32.NativeMethods" -as [type]) {
+        return
+    }
+
+    Add-Type -Namespace Win32 -Name NativeMethods -MemberDefinition @"
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, System.IntPtr pvParam, uint fWinIni);
+"@ -ErrorAction Stop
+}
+
+function Invoke-SystemParametersInfoBool {
+    param(
+        [Parameter(Mandatory)][uint32]$Action,
+        [Parameter(Mandatory)][bool]$Value,
+        [Parameter(Mandatory)][string]$Label
+    )
+
+    try {
+        Ensure-User32Interop
+
+        $SPIF_UPDATEINIFILE = 0x01
+        $SPIF_SENDCHANGE    = 0x02
+        $flags = $SPIF_UPDATEINIFILE -bor $SPIF_SENDCHANGE
+        $uiParam = if ($Value) { [uint32]1 } else { [uint32]0 }
+
+        $ok = [Win32.NativeMethods]::SystemParametersInfo($Action, $uiParam, [IntPtr]::Zero, [uint32]$flags)
+        if (-not $ok) {
+            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-Warning "SystemParametersInfo failed: $Label :: Win32Error=$err"
+        }
+    }
+    catch {
+        Write-Warning "SystemParametersInfo skipped: $Label :: $(Get-ErrorText $_)"
+    }
+}
+
+
+function Invoke-SystemParametersInfoAnimationOff {
+    param(
+        [string]$Label = "Animation effects"
+    )
+
+    try {
+        if (-not ("Win32.AnimationNativeMethods" -as [type])) {
+            Add-Type -Namespace Win32 -Name AnimationNativeMethods -MemberDefinition @"
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+public struct ANIMATIONINFO {
+    public uint cbSize;
+    public int iMinAnimate;
+}
+
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref ANIMATIONINFO pvParam, uint fWinIni);
+"@ -ErrorAction Stop
+        }
+
+        $SPI_SETANIMATION    = [uint32]0x0049
+        $SPIF_UPDATEINIFILE = [uint32]0x01
+        $SPIF_SENDCHANGE    = [uint32]0x02
+        $flags = $SPIF_UPDATEINIFILE -bor $SPIF_SENDCHANGE
+
+        $animInfo = New-Object Win32.AnimationNativeMethods+ANIMATIONINFO
+        $animInfo.cbSize = [uint32][Runtime.InteropServices.Marshal]::SizeOf([type][Win32.AnimationNativeMethods+ANIMATIONINFO])
+        $animInfo.iMinAnimate = 0
+
+        $ok = [Win32.AnimationNativeMethods]::SystemParametersInfo($SPI_SETANIMATION, $animInfo.cbSize, [ref]$animInfo, $flags)
+        if (-not $ok) {
+            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-Warning "SystemParametersInfo failed: $Label :: Win32Error=$err"
+        }
+    }
+    catch {
+        Write-Warning "SystemParametersInfo skipped: $Label :: $(Get-ErrorText $_)"
+    }
+}
+
+function Test-ACPowerOnline {
+    try {
+        $batteryStatus = Get-CimInstance -Namespace root\wmi -ClassName BatteryStatus -ErrorAction Stop
+        if ($null -ne $batteryStatus) {
+            return [bool]($batteryStatus | Where-Object { $_.PowerOnline -eq $true } | Select-Object -First 1)
+        }
+    }
+    catch {
+        # Fall through to secondary checks.
+    }
+
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $lineStatus = [System.Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus
+        if ($lineStatus -eq [System.Windows.Forms.PowerLineStatus]::Online) {
+            return $true
+        }
+        if ($lineStatus -eq [System.Windows.Forms.PowerLineStatus]::Offline) {
+            return $false
+        }
+    }
+    catch {
+        # Fall through to WMI battery fallback.
+    }
+
+    try {
+        $batteries = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
+        if ($null -eq $batteries) {
+            return $true
+        }
+
+        # Win32_Battery BatteryStatus values commonly treated as AC/charging states:
+        # 2=AC/High, 6=Charging, 7=Charging and High, 8=Charging and Low,
+        # 9=Charging and Critical, 11=Partially Charged.
+        return [bool]($batteries | Where-Object { $_.BatteryStatus -in 2,6,7,8,9,11 } | Select-Object -First 1)
+    }
+    catch {
+        Write-Warning "AC power detection failed; Ultimate Performance activation skipped: $(Get-ErrorText $_)"
+        return $false
+    }
+}
+
+function Get-PowerSchemeGuidByLabel {
+    param([Parameter(Mandatory)][string[]]$Labels)
+
+    $out = & powercfg.exe /list 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "powercfg failed: powercfg /list :: $(Join-NativeOutput $out)"
+        return $null
+    }
+
+    foreach ($line in $out) {
+        foreach ($label in $Labels) {
+            if ([string]$line -match [regex]::Escape($label) -and [string]$line -match '([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})') {
+                return $matches[1]
+            }
+        }
+    }
+
+    return $null
+}
+
+function Enable-UltimatePerformanceOnAC {
+    Write-Step "Applying Ultimate Performance power scheme on AC power only"
+
+    if (-not (Test-ACPowerOnline)) {
+        Write-Host "DC power detected. Ultimate Performance activation skipped; DC power policy was not changed."
+        return
+    }
+
+    $ultimateBaseGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61"
+    $targetGuid = Get-PowerSchemeGuidByLabel -Labels @("Ultimate Performance", "최고의 성능")
+
+    if ([string]::IsNullOrWhiteSpace($targetGuid)) {
+        $dupOut = & powercfg.exe /duplicatescheme $ultimateBaseGuid 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            $dupText = Join-NativeOutput $dupOut
+            if ($dupText -match '([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})') {
+                $targetGuid = $matches[1]
+            }
+        }
+        else {
+            Write-Warning "powercfg failed: powercfg /duplicatescheme $ultimateBaseGuid :: $(Join-NativeOutput $dupOut)"
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($targetGuid)) {
+        $targetGuid = $ultimateBaseGuid
+    }
+
+    Invoke-PowerCfg "/setactive" $targetGuid
+    Write-Host "Ultimate Performance active on AC power: $targetGuid"
+}
+
 function Export-RegKey {
     param([Parameter(Mandatory)][string]$RegPath)
 
@@ -245,14 +453,20 @@ $keysToBackup = @(
     "HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo",
     "HKCU\Control Panel\International\User Profile",
     "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced",
+    "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects",
+    "HKCU\Software\Microsoft\Windows\DWM",
+    "HKCU\Control Panel\Desktop",
+    "HKCU\Control Panel\Desktop\WindowMetrics",
     "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager",
     "HKCU\Software\Microsoft\Windows\CurrentVersion\Privacy",
+    "HKCU\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement",
     "HKCU\Software\Microsoft\Windows\CurrentVersion\Search",
     "HKCU\Software\Microsoft\Windows\CurrentVersion\SearchSettings",
     "HKCU\Software\Microsoft\Siuf",
     "HKCU\Software\Microsoft\GameBar",
     "HKCU\Software\Microsoft\Windows\CurrentVersion\Lock Screen",
     "HKCU\Software\Policies\Microsoft\Windows\Explorer",
+    "HKLM\SOFTWARE\Policies\Microsoft\Windows\Explorer",
     "HKCU\Software\Policies\Microsoft\Windows\CloudContent",
     "HKLM\SOFTWARE\Policies\Microsoft\Windows\DataCollection",
     "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\DataCollection",
@@ -277,6 +491,9 @@ Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" "DisabledB
 
 Set-Dword "HKCU:\Control Panel\International\User Profile" "HttpAcceptLanguageOptOut" 1
 Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "Start_TrackProgs" 0
+
+# System > Notifications > Suggest ways I can finish setting up my device = Off
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement" "ScoobeSystemSettingEnabled" 0
 
 $cdmPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager"
 
@@ -314,6 +531,7 @@ $cloudHKLM = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent"
 $cloudHKCU = "HKCU:\Software\Policies\Microsoft\Windows\CloudContent"
 
 Set-Dword $cloudHKLM "DisableWindowsConsumerFeatures" 1
+Set-Dword $cloudHKLM "DisableConsumerFeatures" 1
 Set-Dword $cloudHKLM "DisableSoftLanding" 1
 Set-Dword $cloudHKLM "DisableThirdPartySuggestions" 1
 Set-Dword $cloudHKLM "DisableWindowsSpotlightFeatures" 1
@@ -322,6 +540,10 @@ Set-Dword $cloudHKLM "DisableWindowsSpotlightOnActionCenter" 1
 Set-Dword $cloudHKLM "DisableWindowsSpotlightWindowsWelcomeExperience" 1
 Set-Dword $cloudHKLM "DisableTailoredExperiencesWithDiagnosticData" 1
 Set-Dword $cloudHKCU "DisableTailoredExperiencesWithDiagnosticData" 1
+
+# User-scope CloudContent complements for Windows tips / soft landing suppression.
+Set-Dword $cloudHKCU "DisableSoftLanding" 1
+Set-Dword $cloudHKCU "DisableConsumerFeatures" 1
 
 Write-Step "Disabling Accounts > Windows Backup > Remember my apps"
 
@@ -356,7 +578,7 @@ Set-Dword "HKCU:\Software\Microsoft\InputPersonalization" "RestrictImplicitTextC
 Set-Dword "HKCU:\Software\Microsoft\InputPersonalization\TrainedDataStore" "HarvestContacts" 0
 Set-Dword "HKCU:\Software\Microsoft\Personalization\Settings" "AcceptedPrivacyPolicy" 0
 
-Write-Step "Disabling Search, Search permissions, Cloud content search, and Bing search"
+Write-Step "Disabling Search, Store suggestions, Search permissions, Cloud content search, and Bing search"
 
 Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "BingSearchEnabled" 0
 Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "CortanaConsent" 0
@@ -376,13 +598,29 @@ Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedS
 Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "DisableWebSearch" 1
 Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "EnableDynamicContentInWSB" 0
 
+# Windows key / Start search: disable web-backed suggestions, including Microsoft Store app suggestions.
 Set-Dword "HKCU:\Software\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
 Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
+
+# Also disable Store-based app lookup surfaces used by Windows shell.
+Set-Dword "HKCU:\Software\Policies\Microsoft\Windows\Explorer" "NoUseStoreOpenWith" 1
+Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "NoUseStoreOpenWith" 1
 
 Write-Step "Disabling File Explorer sync provider notifications"
 
 # Folder Options > View > Advanced settings > Show sync provider notifications = Off
 Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowSyncProviderNotifications" 0
+
+Write-Step "Configuring File Explorer startup and privacy options"
+
+# Folder Options > General > Open File Explorer to: This PC
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "LaunchTo" 1
+
+# Folder Options > General > Privacy
+# Show recently used files, frequently used folders, and Office.com files = Off
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowRecent" 0
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowFrequent" 0
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowCloudFilesInQuickAccess" 0
 
 Write-Step "Disabling and stopping selected Windows services"
 
@@ -410,19 +648,7 @@ Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization" "DODo
 Set-Dword "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config" "DownloadMode" 0
 Set-Dword "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config" "DODownloadMode" 0
 
-Write-Step "Applying power mode fallback settings"
-
-Invoke-PowerCfg "/setactive" "SCHEME_BALANCED"
-
-Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMIN" "100"
-Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMAX" "100"
-Invoke-PowerCfg "/setacvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PERFEPP" "0"
-
-Invoke-PowerCfg "/setdcvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMIN" "5"
-Invoke-PowerCfg "/setdcvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PROCTHROTTLEMAX" "100"
-Invoke-PowerCfg "/setdcvalueindex" "SCHEME_CURRENT" "SUB_PROCESSOR" "PERFEPP" "50"
-
-Invoke-PowerCfg "/setactive" "SCHEME_CURRENT"
+Enable-UltimatePerformanceOnAC
 
 Invoke-MMAgentEnable
 
@@ -432,9 +658,49 @@ Set-Dword "HKCU:\Software\Microsoft\GameBar" "UseNexusForGameBarEnabled" 0
 Set-Dword "HKCU:\Software\Microsoft\GameBar" "ShowStartupPanel" 0
 Set-Dword "HKCU:\Software\Microsoft\GameBar" "AllowAutoGameMode" 0
 
-Write-Step "Disabling visual transparency effects"
+Write-Step "Applying custom visual effects"
 
+# System Properties > Advanced > Performance > Visual Effects = Custom.
+# Use a custom UserPreferencesMask that keeps requested non-animation visual effects enabled
+# while keeping the Accessibility > Visual effects > Animation effects group off.
+# - Enable Peek
+# - Show window contents while dragging
+# - Show thumbnails instead of icons
+# - Show translucent selection rectangle
+# - Smooth edges of screen fonts
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" "VisualFXSetting" 3
+Set-Binary "HKCU:\Control Panel\Desktop" "UserPreferencesMask" ([byte[]](0x90,0x12,0x07,0x80,0x10,0x00,0x00,0x00))
+
+Set-Dword "HKCU:\Software\Microsoft\Windows\DWM" "EnableAeroPeek" 1
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "DisablePreviewDesktop" 0
+
+Set-String "HKCU:\Control Panel\Desktop" "DragFullWindows" "1"
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "IconsOnly" 0
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewAlphaSelect" 1
+Set-String "HKCU:\Control Panel\Desktop" "FontSmoothing" "2"
+Set-Dword "HKCU:\Control Panel\Desktop" "FontSmoothingType" 2
+
+# Explicitly keep non-requested common visual-effect items disabled.
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewShadow" 0
+Set-Dword "HKCU:\Software\Microsoft\Windows\DWM" "AlwaysHibernateThumbnails" 0
+
+Write-Step "Disabling Accessibility animation effects"
+
+# Settings > Accessibility > Visual effects > Animation effects = Off.
+# The Settings toggle is not controlled by MinAnimate alone. It also depends on UserPreferencesMask.
+# Keep VisualFXSetting at Custom so the requested visual-effect checkboxes above remain enabled.
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" "VisualFXSetting" 3
+Set-Binary "HKCU:\Control Panel\Desktop" "UserPreferencesMask" ([byte[]](0x90,0x12,0x07,0x80,0x10,0x00,0x00,0x00))
+Set-String "HKCU:\Control Panel\Desktop\WindowMetrics" "MinAnimate" "0"
+Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarAnimations" 0
+Invoke-SystemParametersInfoAnimationOff -Label "Animation effects"
+
+# Accessibility > Visual effects > Transparency effects = Off.
 Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" "EnableTransparency" 0
+
+# Apply the two UI parameters that Windows exposes through SystemParametersInfo.
+Invoke-SystemParametersInfoBool -Action 0x0025 -Value $true -Label "Show window contents while dragging"
+Invoke-SystemParametersInfoBool -Action 0x004B -Value $true -Label "Smooth edges of screen fonts"
 
 Write-Step "Disabling Lock Screen tips and setting status to None"
 
