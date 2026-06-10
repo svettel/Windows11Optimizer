@@ -2,10 +2,15 @@
 
 ## 사용법
 
-- 적용할 경우 `Windows11_OneClick_Optimizer.cmd` 파일을 더블클릭합니다.
-- 원복할 경우 `Windows11_OneClick_Optimizer_Restore_Defaults.cmd` 파일을 더블클릭합니다.
+- 전체 최적화를 적용할 경우 `Windows11_OneClick_Optimizer.cmd` 파일을 더블클릭합니다.
+- 전체 원복을 적용할 경우 `Windows11_OneClick_Optimizer_Restore_Defaults.cmd` 파일을 더블클릭합니다.
+- 항목별 최적화 또는 원복을 선택할 경우 `Windows_Optimize_Selector.cmd` 파일을 더블클릭합니다.
+
+`Windows_Optimize_Selector.cmd`를 사용하면 README의 번호별 기능 그룹을 선택하여 필요한 항목만 개별적으로 최적화하거나 원복할 수 있습니다.
 
 피드백은 s_vettel@naver.com으로 부탁드립니다.
+
+업데이트(2026-06-10): Windows_Optimize_Selector.cmd를 추가하여 README의 기능 항목별로 개별 최적화 또는 원복을 선택할 수 있도록 했습니다.
 
 업데이트(2026-06-07): 윈도우 알림 정책 비활성화, 제휴 및 추천 앱 비활성화, 안내성 팁 및 팝업광고 비활성화, 시각 효과 사용자 지정 및 애니메이션 비활성화, 파일 탐색기 시작/개인정보 옵션, AC 전원 연결 시 최고의 성능 활성화, 원복 스크립트를 추가했습니다.
 
