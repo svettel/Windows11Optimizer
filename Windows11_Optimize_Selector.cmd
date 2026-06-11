@@ -311,85 +311,360 @@ public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref 
 }
 
 function Test-ACPowerOnline {
+    <#
+        AC 전원 연결 여부를 여러 소스에서 교차 확인한다.
+        하나의 WMI 값만으로 판단하면 일부 Modern Standby/가상화/데스크톱 환경에서
+        실제 AC 연결 상태를 잘못 판단할 수 있으므로 여러 소스를 사용한다.
+    #>
+    $observations = New-Object System.Collections.Generic.List[object]
+
     try {
         $batteryStatus = Get-CimInstance -Namespace root\wmi -ClassName BatteryStatus -ErrorAction Stop
-        if ($null -ne $batteryStatus) {
-            return [bool]($batteryStatus | Where-Object { $_.PowerOnline -eq $true } | Select-Object -First 1)
-        }
-    }
-    catch { }
-    try {
-        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
-        $lineStatus = [System.Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus
-        if ($lineStatus -eq [System.Windows.Forms.PowerLineStatus]::Online) { return $true }
-        if ($lineStatus -eq [System.Windows.Forms.PowerLineStatus]::Offline) { return $false }
-    }
-    catch { }
-    try {
-        $batteries = Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue
-        if ($null -eq $batteries) { return $true }
-        return [bool]($batteries | Where-Object { $_.BatteryStatus -in 2,6,7,8,9,11 } | Select-Object -First 1)
-    }
-    catch {
-        Write-Warning "AC power detection failed; Ultimate Performance activation skipped: $(Get-ErrorText $_)"
-        return $false
-    }
-}
-
-function Get-PowerSchemeGuidByLabel {
-    param([Parameter(Mandatory)][string[]]$Labels)
-    $out = & powercfg.exe /list 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "powercfg failed: powercfg /list :: $(Join-NativeOutput $out)"
-        return $null
-    }
-    foreach ($line in $out) {
-        foreach ($label in $Labels) {
-            if ([string]$line -match [regex]::Escape($label) -and [string]$line -match '([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})') {
-                return $matches[1]
+        foreach ($item in @($batteryStatus)) {
+            if ($null -ne $item -and $null -ne $item.PowerOnline) {
+                $observations.Add([pscustomobject]@{ Source = "root\wmi:BatteryStatus.PowerOnline"; IsAC = [bool]$item.PowerOnline })
             }
         }
     }
+    catch { }
+
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $lineStatus = [System.Windows.Forms.SystemInformation]::PowerStatus.PowerLineStatus
+        if ($lineStatus -eq [System.Windows.Forms.PowerLineStatus]::Online) {
+            $observations.Add([pscustomobject]@{ Source = "System.Windows.Forms.PowerLineStatus"; IsAC = $true })
+        }
+        elseif ($lineStatus -eq [System.Windows.Forms.PowerLineStatus]::Offline) {
+            $observations.Add([pscustomobject]@{ Source = "System.Windows.Forms.PowerLineStatus"; IsAC = $false })
+        }
+    }
+    catch { }
+
+    try {
+        $batteries = @(Get-CimInstance -ClassName Win32_Battery -ErrorAction SilentlyContinue)
+        if ($batteries.Count -eq 0) {
+            Write-Host "AC power assumed: no battery device was detected."
+            return $true
+        }
+
+        foreach ($battery in $batteries) {
+            if ($battery.BatteryStatus -in 6,7,8,9) {
+                $observations.Add([pscustomobject]@{ Source = "Win32_Battery.BatteryStatus"; IsAC = $true })
+            }
+            elseif ($battery.BatteryStatus -eq 1) {
+                $observations.Add([pscustomobject]@{ Source = "Win32_Battery.BatteryStatus"; IsAC = $false })
+            }
+        }
+    }
+    catch { }
+
+    if ($observations | Where-Object { $_.IsAC -eq $true } | Select-Object -First 1) {
+        Write-Host "AC power detected."
+        return $true
+    }
+
+    if ($observations.Count -gt 0) {
+        $details = ($observations | ForEach-Object { "$($_.Source)=$($_.IsAC)" }) -join "; "
+        Write-Host "DC power detected or AC not confirmed: $details"
+        return $false
+    }
+
+    Write-Warning "AC power state could not be determined. Power scheme activation skipped to avoid changing DC policy."
+    return $false
+}
+
+function Get-PowerSchemes {
+    $out = & powercfg.exe /list 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "powercfg failed: powercfg /list :: $(Join-NativeOutput $out)"
+        return @()
+    }
+
+    $schemes = @()
+    foreach ($line in $out) {
+        $s = [string]$line
+        if ($s -match '([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})') {
+            $guid = $matches[1].ToLowerInvariant()
+            $name = ""
+            if ($s -match '\(([^\)]*)\)') { $name = $matches[1] }
+            $schemes += [pscustomobject]@{
+                Guid   = $guid
+                Name   = $name
+                Line   = $s
+                Active = ($s -match '\*')
+            }
+        }
+    }
+    return @($schemes)
+}
+
+function Get-ActivePowerSchemeGuid {
+    $out = & powercfg.exe /getactivescheme 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "powercfg failed: powercfg /getactivescheme :: $(Join-NativeOutput $out)"
+        return $null
+    }
+
+    $activeText = Join-NativeOutput $out
+    if ($activeText -match '([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})') {
+        return $matches[1].ToLowerInvariant()
+    }
     return $null
+}
+
+function Find-PowerSchemeByGuidOrName {
+    param(
+        [string]$Guid,
+        [Parameter(Mandatory)][string]$NamePattern
+    )
+
+    $schemes = @(Get-PowerSchemes)
+    if (-not [string]::IsNullOrWhiteSpace($Guid)) {
+        $exact = $schemes | Where-Object { $_.Guid -eq $Guid.ToLowerInvariant() } | Select-Object -First 1
+        if ($null -ne $exact) { return $exact.Guid }
+    }
+
+    $named = $schemes | Where-Object { $_.Name -match $NamePattern -or $_.Line -match $NamePattern } | Select-Object -First 1
+    if ($null -ne $named) { return $named.Guid }
+
+    return $null
+}
+
+function Find-HighPerformanceScheme {
+    return Find-PowerSchemeByGuidOrName -Guid "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c" -NamePattern '(?i)high\s*performance|고\s*성능'
+}
+
+function Find-UltimatePerformanceScheme {
+    return Find-PowerSchemeByGuidOrName -Guid "e9a42b02-d5df-448d-aa00-03f14749eb61" -NamePattern '(?i)ultimate\s+performance|최고\s*의?\s*성능|최고\s*성능'
+}
+
+function Set-PowerSchemeName {
+    param(
+        [Parameter(Mandatory)][string]$Guid,
+        [Parameter(Mandatory)][string]$Name
+    )
+    $out = & powercfg.exe /changename $Guid $Name 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "powercfg failed: powercfg /changename $Guid $Name :: $(Join-NativeOutput $out)"
+    }
+}
+
+function New-PowerSchemeFromTemplate {
+    param(
+        [Parameter(Mandatory)][string]$TemplateGuid,
+        [Parameter(Mandatory)][string]$DisplayName
+    )
+
+    $template = $TemplateGuid.ToLowerInvariant()
+    $newGuid = ([guid]::NewGuid()).ToString().ToLowerInvariant()
+    $dupOut = & powercfg.exe /duplicatescheme $template $newGuid 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        Set-PowerSchemeName -Guid $newGuid -Name $DisplayName
+        return $newGuid
+    }
+
+    Write-Warning "powercfg failed: powercfg /duplicatescheme $template $newGuid :: $(Join-NativeOutput $dupOut)"
+
+    $dupOut = & powercfg.exe /duplicatescheme $template 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "powercfg failed: powercfg /duplicatescheme $template :: $(Join-NativeOutput $dupOut)"
+        return $null
+    }
+
+    $dupText = Join-NativeOutput $dupOut
+    $guidMatches = [regex]::Matches($dupText, '([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})')
+    if ($guidMatches.Count -gt 0) {
+        $createdGuid = $guidMatches[$guidMatches.Count - 1].Groups[1].Value.ToLowerInvariant()
+        Set-PowerSchemeName -Guid $createdGuid -Name $DisplayName
+        return $createdGuid
+    }
+
+    Write-Warning "powercfg /duplicatescheme succeeded, but the new scheme GUID could not be parsed."
+    return $null
+}
+
+function Set-ACPerformanceDefaults {
+    param([Parameter(Mandatory)][string]$Guid)
+
+    $settings = @(
+        @("SUB_PROCESSOR", "PROCTHROTTLEMIN", "100"),
+        @("SUB_PROCESSOR", "PROCTHROTTLEMAX", "100"),
+        @("SUB_PROCESSOR", "PERFEPP", "0")
+    )
+
+    foreach ($setting in $settings) {
+        $out = & powercfg.exe /setacvalueindex $Guid $setting[0] $setting[1] $setting[2] 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "powercfg failed: powercfg /setacvalueindex $Guid $($setting[0]) $($setting[1]) $($setting[2]) :: $(Join-NativeOutput $out)"
+        }
+    }
+}
+
+function Get-OrCreateHighPerformanceScheme {
+    $highGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"
+    $balancedGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+
+    $targetGuid = Find-HighPerformanceScheme
+    if (-not [string]::IsNullOrWhiteSpace($targetGuid)) {
+        Write-Host "Existing High Performance scheme found: $targetGuid"
+        return $targetGuid
+    }
+
+    Write-Host "High Performance scheme was not found. Creating it."
+    $targetGuid = New-PowerSchemeFromTemplate -TemplateGuid $highGuid -DisplayName "High performance"
+    if ([string]::IsNullOrWhiteSpace($targetGuid)) {
+        Write-Warning "The built-in High Performance template is unavailable. Creating a high-performance compatible scheme from Balanced."
+        $targetGuid = New-PowerSchemeFromTemplate -TemplateGuid $balancedGuid -DisplayName "High performance"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($targetGuid)) {
+        Set-ACPerformanceDefaults -Guid $targetGuid
+        return $targetGuid
+    }
+
+    return $null
+}
+
+function Get-OrCreateUltimatePerformanceScheme {
+    $ultimateGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61"
+    $balancedGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+
+    $targetGuid = Find-UltimatePerformanceScheme
+    if (-not [string]::IsNullOrWhiteSpace($targetGuid)) {
+        Write-Host "Existing Ultimate Performance scheme found: $targetGuid"
+        return $targetGuid
+    }
+
+    Write-Host "Ultimate Performance scheme was not found. Creating it from the built-in template."
+    $targetGuid = New-PowerSchemeFromTemplate -TemplateGuid $ultimateGuid -DisplayName "Ultimate Performance"
+
+    if ([string]::IsNullOrWhiteSpace($targetGuid)) {
+        Write-Warning "The built-in Ultimate Performance template is unavailable on this system. Creating an Ultimate Performance compatible scheme from High Performance or Balanced."
+        $sourceGuid = Find-HighPerformanceScheme
+        if ([string]::IsNullOrWhiteSpace($sourceGuid)) {
+            $sourceGuid = Get-OrCreateHighPerformanceScheme
+        }
+        if (-not [string]::IsNullOrWhiteSpace($sourceGuid)) {
+            $targetGuid = New-PowerSchemeFromTemplate -TemplateGuid $sourceGuid -DisplayName "Ultimate Performance"
+        }
+        if ([string]::IsNullOrWhiteSpace($targetGuid)) {
+            $targetGuid = New-PowerSchemeFromTemplate -TemplateGuid $balancedGuid -DisplayName "Ultimate Performance"
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($targetGuid)) {
+        Set-ACPerformanceDefaults -Guid $targetGuid
+        return $targetGuid
+    }
+
+    return $null
+}
+
+function Set-ActivePowerSchemeAndVerify {
+    param(
+        [Parameter(Mandatory)][string]$Guid,
+        [string]$DisplayName = "Power scheme"
+    )
+
+    $normalizedGuid = $Guid.ToLowerInvariant()
+    $setOut = & powercfg.exe /setactive $normalizedGuid 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "powercfg failed: powercfg /setactive $normalizedGuid :: $(Join-NativeOutput $setOut)"
+        return $false
+    }
+
+    Start-Sleep -Milliseconds 300
+    $activeGuid = Get-ActivePowerSchemeGuid
+    if ($activeGuid -eq $normalizedGuid) {
+        Write-Host "Active power scheme verified: $normalizedGuid"
+        return $true
+    }
+
+    Start-Sleep -Milliseconds 700
+    $activeGuid = Get-ActivePowerSchemeGuid
+    if ($activeGuid -eq $normalizedGuid) {
+        Write-Host "Active power scheme verified after retry: $normalizedGuid"
+        return $true
+    }
+
+    if ([string]::IsNullOrWhiteSpace($activeGuid)) {
+        Write-Warning "$DisplayName setactive command was issued, but active power scheme could not be verified."
+    }
+    else {
+        Write-Warning "$DisplayName was not activated. Current active scheme: $activeGuid; target scheme: $normalizedGuid"
+    }
+    return $false
+}
+
+function Read-PowerPlanOptimizationChoice {
+    Write-Host ""
+    Write-Host "전원 계획을 선택하십시오." -ForegroundColor Yellow
+    Write-Host " 1. 고성능"
+    Write-Host " 2. 최고의 성능"
+    Write-Host "취소하려면 Esc 또는 n을 누르십시오."
+
+    while ($true) {
+        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        if ($key.VirtualKeyCode -eq 27) { Write-Host "취소되었습니다."; return "Cancel" }
+        $ch = [string]$key.Character
+        if ($ch -eq "1") { Write-Host "고성능을 선택했습니다."; return "HighPerformance" }
+        if ($ch -eq "2") { Write-Host "최고의 성능을 선택했습니다."; return "UltimatePerformance" }
+        if ($ch -match '^[nN]$') { Write-Host "취소되었습니다."; return "Cancel" }
+        Write-Host "잘못된 입력입니다. 1, 2, n, Esc 중 하나를 누르십시오."
+    }
+}
+
+function Enable-HighPerformanceOnAC {
+    Write-Step "Applying High Performance power scheme on AC power only"
+    if (-not (Test-ACPowerOnline)) {
+        Write-Host "High Performance activation skipped because AC power was not confirmed. DC power policy was not changed."
+        return $false
+    }
+
+    $targetGuid = Get-OrCreateHighPerformanceScheme
+    if ([string]::IsNullOrWhiteSpace($targetGuid)) {
+        Write-Warning "High Performance scheme could not be created or found. Active power scheme was not changed."
+        return $false
+    }
+
+    if (Set-ActivePowerSchemeAndVerify -Guid $targetGuid -DisplayName "High Performance") {
+        Write-Host "High Performance active on AC power: $targetGuid"
+        return $true
+    }
+    return $false
 }
 
 function Enable-UltimatePerformanceOnAC {
     Write-Step "Applying Ultimate Performance power scheme on AC power only"
     if (-not (Test-ACPowerOnline)) {
-        Write-Host "DC power detected. Ultimate Performance activation skipped; DC power policy was not changed."
-        return
+        Write-Host "Ultimate Performance activation skipped because AC power was not confirmed. DC power policy was not changed."
+        return $false
     }
-    $ultimateBaseGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61"
-    $targetGuid = Get-PowerSchemeGuidByLabel -Labels @("Ultimate Performance", "최고의 성능")
+
+    $targetGuid = Get-OrCreateUltimatePerformanceScheme
     if ([string]::IsNullOrWhiteSpace($targetGuid)) {
-        $dupOut = & powercfg.exe /duplicatescheme $ultimateBaseGuid 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            $dupText = Join-NativeOutput $dupOut
-            if ($dupText -match '([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})') {
-                $targetGuid = $matches[1]
-            }
-        }
-        else {
-            Write-Warning "powercfg failed: powercfg /duplicatescheme $ultimateBaseGuid :: $(Join-NativeOutput $dupOut)"
-        }
+        Write-Warning "Ultimate Performance scheme could not be created or found. Active power scheme was not changed."
+        return $false
     }
-    if ([string]::IsNullOrWhiteSpace($targetGuid)) { $targetGuid = $ultimateBaseGuid }
-    Invoke-PowerCfg "/setactive" $targetGuid
-    Write-Host "Ultimate Performance active on AC power: $targetGuid"
+
+    if (Set-ActivePowerSchemeAndVerify -Guid $targetGuid -DisplayName "Ultimate Performance") {
+        Write-Host "Ultimate Performance active on AC power: $targetGuid"
+        return $true
+    }
+    return $false
 }
 
 function Restore-BalancedPowerScheme {
     Write-Step "Restoring Balanced power scheme"
     $balancedGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
-    Invoke-Native powercfg.exe "/setactive" $balancedGuid | Out-Null
+    [void](Set-ActivePowerSchemeAndVerify -Guid $balancedGuid -DisplayName "Balanced")
+    Write-Host "Balanced power scheme restore command was issued: $balancedGuid"
+
     if ($RemoveUltimatePerformanceSchemes) {
-        $out = & powercfg.exe /list 2>&1
-        foreach ($line in $out) {
-            if ([string]$line -match '([0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12})' -and [string]$line -match 'Ultimate Performance|최고의 성능') {
-                $guid = $matches[1]
-                if ($guid -ne $balancedGuid) {
-                    Invoke-Native powercfg.exe "/delete" $guid | Out-Null
-                }
+        $schemes = Get-PowerSchemes
+        foreach ($scheme in $schemes) {
+            if (($scheme.Name -match '(?i)ultimate\s+performance|최고\s*의?\s*성능|최고\s*성능' -or $scheme.Line -match '(?i)ultimate\s+performance|최고\s*의?\s*성능|최고\s*성능') -and $scheme.Guid -ne $balancedGuid) {
+                Invoke-Native powercfg.exe "/delete" $scheme.Guid | Out-Null
             }
         }
     }
@@ -645,15 +920,53 @@ function Restore-AppxByItems {
     }
 }
 
-function Refresh-PoliciesAndShell {
-    Write-Step "Refreshing policies and restarting shell components"
-    & gpupdate.exe /target:computer /force | Out-Null
-    & gpupdate.exe /target:user /force | Out-Null
-    $procNames = @("explorer", "SearchHost", "StartMenuExperienceHost", "Widgets", "WidgetService")
-    foreach ($p in $procNames) {
-        Get-Process -Name $p -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+function Invoke-GpUpdateSafe {
+    param(
+        [Parameter(Mandatory)][ValidateSet('computer','user')][string]$Target,
+        [int]$TimeoutSeconds = 20
+    )
+    try {
+        $args = @("/target:$Target", "/force", "/wait:0")
+        $proc = Start-Process -FilePath "gpupdate.exe" -ArgumentList $args -WindowStyle Hidden -PassThru -ErrorAction Stop
+        if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $proc.Kill() } catch { }
+            Write-Warning "gpupdate timeout skipped: target=$Target"
+            return
+        }
+        if ($proc.ExitCode -ne 0) {
+            Write-Warning "gpupdate returned exit code $($proc.ExitCode): target=$Target"
+        }
     }
-    Start-Process explorer.exe
+    catch {
+        Write-Warning "gpupdate failed: target=$Target :: $(Get-ErrorText $_)"
+    }
+}
+
+function Refresh-PoliciesAndShell {
+    param(
+        [switch]$SkipGpUpdate,
+        [switch]$SkipShellRestart
+    )
+    Write-Step "Refreshing policies and restarting shell components"
+
+    if (-not $SkipGpUpdate) {
+        Invoke-GpUpdateSafe -Target "computer"
+        Invoke-GpUpdateSafe -Target "user"
+    }
+    else {
+        Write-Host "Policy refresh skipped for this group."
+    }
+
+    if (-not $SkipShellRestart) {
+        $procNames = @("explorer", "SearchHost", "StartMenuExperienceHost", "Widgets", "WidgetService")
+        foreach ($p in $procNames) {
+            Get-Process -Name $p -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        }
+        Start-Process explorer.exe
+    }
+    else {
+        Write-Host "Shell restart skipped for this group."
+    }
 }
 
 function Backup-CurrentRegistryState {
@@ -956,7 +1269,23 @@ function Restore-Group06 {
 
 function Apply-Group07 {
     Write-ActionHeader "활성화/최적화" "7. 전원 설정 조정"
-    Enable-UltimatePerformanceOnAC
+    $powerChoice = Read-PowerPlanOptimizationChoice
+    if ($powerChoice -eq "Cancel") {
+        $script:GroupActionCanceled = $true
+        return
+    }
+
+    $ok = $false
+    if ($powerChoice -eq "HighPerformance") {
+        $ok = Enable-HighPerformanceOnAC
+    }
+    elseif ($powerChoice -eq "UltimatePerformance") {
+        $ok = Enable-UltimatePerformanceOnAC
+    }
+
+    if (-not $ok) {
+        $script:GroupActionFailed = $true
+    }
 }
 
 function Restore-Group07 {
@@ -1167,9 +1496,24 @@ function Invoke-GroupAction {
         [Parameter(Mandatory)][ValidateSet('Apply','Restore')][string]$Mode
     )
     $fn = if ($Mode -eq 'Apply') { $Group.Apply } else { $Group.Restore }
+    $script:GroupActionCanceled = $false
+    $script:GroupActionFailed = $false
     try {
         & $fn
-        Refresh-PoliciesAndShell
+        if ($script:GroupActionCanceled) {
+            Write-Host "작업이 취소되었습니다."
+            return
+        }
+        if ($script:GroupActionFailed) {
+            Write-Warning "작업이 완료되지 않았습니다: $($Group.No). $($Group.Title) / $Mode"
+            return
+        }
+        if ($Group.No -eq 7) {
+            Write-Host "Power settings do not require gpupdate or shell restart. Post-action refresh was skipped."
+        }
+        else {
+            Refresh-PoliciesAndShell
+        }
         Write-Host ""
         Write-Host "작업 완료: $($Group.No). $($Group.Title) / $Mode" -ForegroundColor Green
         Write-Host "재부팅을 권장합니다."
