@@ -274,6 +274,7 @@ function Invoke-SystemParametersInfoBool {
     }
 }
 
+
 function Invoke-SystemParametersInfoAnimation {
     param(
         [Parameter(Mandatory)][bool]$Enabled,
@@ -1342,15 +1343,14 @@ function Restore-Group11 {
 
 function Apply-Group12 {
     Write-ActionHeader "활성화/최적화" "12. 접근성 / 시각 효과 / 투명 효과 및 애니메이션 효과 비활성화"
+    # Do not modify "Smooth edges of screen fonts".
+    # FontSmoothing, FontSmoothingType, SPI_SETFONTSMOOTHING, and UserPreferencesMask are intentionally untouched.
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" "VisualFXSetting" 3
-    Set-BinaryValue "HKCU:\Control Panel\Desktop" "UserPreferencesMask" ([byte[]](0x90,0x12,0x07,0x80,0x10,0x00,0x00,0x00))
     Set-Dword "HKCU:\Software\Microsoft\Windows\DWM" "EnableAeroPeek" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "DisablePreviewDesktop" 0
     Set-StringValue "HKCU:\Control Panel\Desktop" "DragFullWindows" "1"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "IconsOnly" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewAlphaSelect" 1
-    Set-StringValue "HKCU:\Control Panel\Desktop" "FontSmoothing" "2"
-    Set-Dword "HKCU:\Control Panel\Desktop" "FontSmoothingType" 2
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewShadow" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\DWM" "AlwaysHibernateThumbnails" 0
     Set-StringValue "HKCU:\Control Panel\Desktop\WindowMetrics" "MinAnimate" "0"
@@ -1358,20 +1358,18 @@ function Apply-Group12 {
     Invoke-SystemParametersInfoAnimation -Enabled $false -Label "Animation effects"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" "EnableTransparency" 0
     Invoke-SystemParametersInfoBool -Action 0x0025 -Value $true -Label "Show window contents while dragging"
-    Invoke-SystemParametersInfoBool -Action 0x004B -Value $true -Label "Smooth edges of screen fonts"
 }
 
 function Restore-Group12 {
     Write-ActionHeader "비활성화/원복" "12. 접근성 / 시각 효과 / 투명 효과 및 애니메이션 효과 비활성화"
+    # Do not modify "Smooth edges of screen fonts".
+    # FontSmoothing, FontSmoothingType, SPI_SETFONTSMOOTHING, and UserPreferencesMask are intentionally untouched.
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" "VisualFXSetting" 0
-    Set-BinaryValue "HKCU:\Control Panel\Desktop" "UserPreferencesMask" ([byte[]](0x9E,0x3E,0x07,0x80,0x12,0x00,0x00,0x00))
     Set-Dword "HKCU:\Software\Microsoft\Windows\DWM" "EnableAeroPeek" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "DisablePreviewDesktop" 0
     Set-StringValue "HKCU:\Control Panel\Desktop" "DragFullWindows" "1"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "IconsOnly" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewAlphaSelect" 1
-    Set-StringValue "HKCU:\Control Panel\Desktop" "FontSmoothing" "2"
-    Set-Dword "HKCU:\Control Panel\Desktop" "FontSmoothingType" 2
     Set-StringValue "HKCU:\Control Panel\Desktop\WindowMetrics" "MinAnimate" "1"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarAnimations" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewShadow" 1
@@ -1379,7 +1377,6 @@ function Restore-Group12 {
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" "EnableTransparency" 1
     Invoke-SystemParametersInfoAnimation -Enabled $true -Label "Animation effects"
     Invoke-SystemParametersInfoBool -Action 0x0025 -Value $true -Label "Show window contents while dragging"
-    Invoke-SystemParametersInfoBool -Action 0x004B -Value $true -Label "Smooth edges of screen fonts"
 }
 
 function Apply-Group13 {
