@@ -792,37 +792,155 @@ function Restore-BalancedPowerScheme {
     }
 }
 
-function Invoke-MMAgentEnable {
-    Write-Step "Enabling Memory Compression and Page Combining"
+function Invoke-MMAgentFeature {
+    param(
+        [Parameter(Mandatory)][ValidateSet("Enable","Disable")][string]$Action,
+        [Parameter(Mandatory)][ValidateSet("ApplicationLaunchPrefetching","ApplicationPreLaunch","MemoryCompression","OperationAPI","PageCombining")][string]$Feature
+    )
+
     try {
         Import-Module MMAgent -ErrorAction Stop
-        Enable-MMAgent -mc -ErrorAction Stop
-        Enable-MMAgent -PageCombining -ErrorAction Stop
-        $mma = Get-MMAgent -ErrorAction SilentlyContinue
-        if ($null -ne $mma) {
-            Write-Host "MemoryCompression : $($mma.MemoryCompression)"
-            Write-Host "PageCombining     : $($mma.PageCombining)"
-        }
+        $cmdName = if ($Action -eq "Enable") { "Enable-MMAgent" } else { "Disable-MMAgent" }
+        $params = @{ $Feature = $true; ErrorAction = "Stop" }
+        & $cmdName @params
+        Write-Host ("{0}-MMAgent -{1}" -f $Action, $Feature)
+        return $true
     }
     catch {
-        Write-Warning "MMAgent configuration skipped: $(Get-ErrorText $_)"
+        Write-Warning ("{0}-MMAgent -{1} failed: {2}" -f $Action, $Feature, (Get-ErrorText $_))
+        return $false
     }
 }
 
-function Invoke-MMAgentDisable {
-    Write-Step "Disabling Memory Compression and Page Combining"
+function Show-MMAgentStatus {
     try {
         Import-Module MMAgent -ErrorAction Stop
-        Disable-MMAgent -mc -ErrorAction Stop
-        Disable-MMAgent -PageCombining -ErrorAction Stop
-        $mma = Get-MMAgent -ErrorAction SilentlyContinue
-        if ($null -ne $mma) {
-            Write-Host "MemoryCompression : $($mma.MemoryCompression)"
-            Write-Host "PageCombining     : $($mma.PageCombining)"
+        $mma = Get-MMAgent -ErrorAction Stop
+        if ($null -eq $mma) { return }
+
+        $props = @(
+            "ApplicationLaunchPrefetching",
+            "ApplicationPreLaunch",
+            "MemoryCompression",
+            "OperationAPI",
+            "PageCombining"
+        )
+
+        Write-Host ""
+        Write-Host "MMAgent status:"
+        foreach ($prop in $props) {
+            $p = $mma.PSObject.Properties[$prop]
+            if ($null -ne $p) {
+                Write-Host ("{0,-30}: {1}" -f $prop, $p.Value)
+            }
         }
     }
     catch {
-        Write-Warning "MMAgent restore/disable skipped: $(Get-ErrorText $_)"
+        Write-Warning "MMAgent status query skipped: $(Get-ErrorText $_)"
+    }
+}
+
+function Invoke-MMAgentProfile {
+    param(
+        [Parameter(Mandatory)][ValidateSet("MaxCompression","RecommendedPC","GamingResponsiveness","MaxCpuResources")][string]$Profile
+    )
+
+    switch ($Profile) {
+        "MaxCompression" {
+            Write-Step "Applying MMAgent profile: 1. 메모리압축최대화"
+            $steps = @(
+                [pscustomobject]@{ Action = "Enable";  Feature = "ApplicationLaunchPrefetching" },
+                [pscustomobject]@{ Action = "Enable";  Feature = "ApplicationPreLaunch" },
+                [pscustomobject]@{ Action = "Enable";  Feature = "MemoryCompression" },
+                [pscustomobject]@{ Action = "Enable";  Feature = "OperationAPI" },
+                [pscustomobject]@{ Action = "Enable";  Feature = "PageCombining" }
+            )
+        }
+        "RecommendedPC" {
+            Write-Step "Applying MMAgent profile: 2. 일반PC권장설정"
+            $steps = @(
+                [pscustomobject]@{ Action = "Enable";  Feature = "ApplicationLaunchPrefetching" },
+                [pscustomobject]@{ Action = "Enable";  Feature = "ApplicationPreLaunch" },
+                [pscustomobject]@{ Action = "Enable";  Feature = "MemoryCompression" },
+                [pscustomobject]@{ Action = "Enable";  Feature = "OperationAPI" },
+                [pscustomobject]@{ Action = "Disable"; Feature = "PageCombining" }
+            )
+        }
+        "GamingResponsiveness" {
+            Write-Step "Applying MMAgent profile: 3. 게임PC반응성최대화"
+            $steps = @(
+                [pscustomobject]@{ Action = "Enable";  Feature = "ApplicationLaunchPrefetching" },
+                [pscustomobject]@{ Action = "Disable"; Feature = "ApplicationPreLaunch" },
+                [pscustomobject]@{ Action = "Enable";  Feature = "MemoryCompression" },
+                [pscustomobject]@{ Action = "Enable";  Feature = "OperationAPI" },
+                [pscustomobject]@{ Action = "Disable"; Feature = "PageCombining" }
+            )
+        }
+        "MaxCpuResources" {
+            Write-Step "Applying MMAgent profile: 4. CPU자원최대사용(권장하지않음)"
+            $steps = @(
+                [pscustomobject]@{ Action = "Disable"; Feature = "ApplicationLaunchPrefetching" },
+                [pscustomobject]@{ Action = "Disable"; Feature = "ApplicationPreLaunch" },
+                [pscustomobject]@{ Action = "Disable"; Feature = "MemoryCompression" },
+                [pscustomobject]@{ Action = "Disable"; Feature = "OperationAPI" },
+                [pscustomobject]@{ Action = "Disable"; Feature = "PageCombining" }
+            )
+        }
+    }
+
+    $allOk = $true
+    foreach ($step in $steps) {
+        $ok = Invoke-MMAgentFeature -Action $step.Action -Feature $step.Feature
+        if (-not $ok) { $allOk = $false }
+    }
+
+    Show-MMAgentStatus
+    return $allOk
+}
+
+function Read-MMAgentOptimizationChoice {
+    Write-Host ""
+    Write-Host "메모리 관리 최적화 방식을 선택하십시오." -ForegroundColor Yellow
+    Write-Host " 1. 메모리압축최대화"
+    Write-Host "    Enable-MMAgent -ApplicationLaunchPrefetching"
+    Write-Host "    Enable-MMAgent -ApplicationPreLaunch"
+    Write-Host "    Enable-MMAgent -MemoryCompression"
+    Write-Host "    Enable-MMAgent -OperationAPI"
+    Write-Host "    Enable-MMAgent -PageCombining"
+    Write-Host ""
+    Write-Host " 2. 일반PC권장설정"
+    Write-Host "    Enable-MMAgent -ApplicationLaunchPrefetching"
+    Write-Host "    Enable-MMAgent -ApplicationPreLaunch"
+    Write-Host "    Enable-MMAgent -MemoryCompression"
+    Write-Host "    Enable-MMAgent -OperationAPI"
+    Write-Host "    Disable-MMAgent -PageCombining"
+    Write-Host ""
+    Write-Host " 3. 게임PC반응성최대화"
+    Write-Host "    Enable-MMAgent -ApplicationLaunchPrefetching"
+    Write-Host "    Disable-MMAgent -ApplicationPreLaunch"
+    Write-Host "    Enable-MMAgent -MemoryCompression"
+    Write-Host "    Enable-MMAgent -OperationAPI"
+    Write-Host "    Disable-MMAgent -PageCombining"
+    Write-Host ""
+    Write-Host " 4. CPU자원최대사용(권장하지않음)"
+    Write-Host "    Disable-MMAgent -ApplicationLaunchPrefetching"
+    Write-Host "    Disable-MMAgent -ApplicationPreLaunch"
+    Write-Host "    Disable-MMAgent -MemoryCompression"
+    Write-Host "    Disable-MMAgent -OperationAPI"
+    Write-Host "    Disable-MMAgent -PageCombining"
+    Write-Host ""
+    Write-Host "취소하려면 Esc 또는 n을 누르십시오."
+
+    while ($true) {
+        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        if ($key.VirtualKeyCode -eq 27) { Write-Host "취소되었습니다."; return "Cancel" }
+        $ch = [string]$key.Character
+        if ($ch -eq "1") { Write-Host "메모리압축최대화를 선택했습니다."; return "MaxCompression" }
+        if ($ch -eq "2") { Write-Host "일반PC권장설정을 선택했습니다."; return "RecommendedPC" }
+        if ($ch -eq "3") { Write-Host "게임PC반응성최대화를 선택했습니다."; return "GamingResponsiveness" }
+        if ($ch -eq "4") { Write-Host "CPU자원최대사용을 선택했습니다."; return "MaxCpuResources" }
+        if ($ch -match '^[nN]$') { Write-Host "취소되었습니다."; return "Cancel" }
+        Write-Host "잘못된 입력입니다. 1, 2, 3, 4, n, Esc 중 하나를 누르십시오."
     }
 }
 
@@ -1418,12 +1536,24 @@ function Restore-Group07 {
 
 function Apply-Group08 {
     Write-ActionHeader "활성화/최적화" "8. 메모리 관리 기능 활성화"
-    Invoke-MMAgentEnable
+    $memoryChoice = Read-MMAgentOptimizationChoice
+    if ($memoryChoice -eq "Cancel") {
+        $script:GroupActionCanceled = $true
+        return
+    }
+
+    $ok = Invoke-MMAgentProfile -Profile $memoryChoice
+    if (-not $ok) {
+        $script:GroupActionFailed = $true
+    }
 }
 
 function Restore-Group08 {
     Write-ActionHeader "비활성화/원복" "8. 메모리 관리 기능 활성화"
-    Invoke-MMAgentDisable
+    $ok = Invoke-MMAgentProfile -Profile "MaxCpuResources"
+    if (-not $ok) {
+        $script:GroupActionFailed = $true
+    }
 }
 
 function Apply-Group09 {
@@ -1627,8 +1757,13 @@ function Invoke-GroupAction {
             Write-Warning "작업이 완료되지 않았습니다: $($Group.No). $($Group.Title) / $Mode"
             return
         }
-        if ($Group.No -eq 7) {
-            Write-Host "Power settings do not require gpupdate or shell restart. Post-action refresh was skipped."
+        if ($Group.No -eq 7 -or $Group.No -eq 8) {
+            if ($Group.No -eq 7) {
+                Write-Host "Power settings do not require gpupdate or shell restart. Post-action refresh was skipped."
+            }
+            elseif ($Group.No -eq 8) {
+                Write-Host "MMAgent settings do not require gpupdate or shell restart. Post-action refresh was skipped."
+            }
         }
         else {
             Refresh-PoliciesAndShell

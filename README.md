@@ -10,6 +10,13 @@
 
 피드백은 s_vettel@naver.com으로 부탁드립니다.
 
+업데이트(2026-06-15): 메모리 압축 기능에 대한 선택사항을 추가하였습니다. 이에 대한 내용들은 아래의 문서들을 참고하였습니다.  
+https://learn.microsoft.com/en-us/powershell/module/mmagent/enable-mmagent?view=windowsserver2025-ps
+https://learn.microsoft.com/ka-ge/windows-server/administration/performance-tuning/subsystem/cache-memory-management/improvements-in-windows-server  
+https://techcommunity.microsoft.com/discussions/windows11/windows-11-memory-compression/4161960  
+
+
+
 업데이트(2026-06-14): 전원 최적화에서 `고성능` 선택시 윈도우 11에서 기본 지원하는 `최고의 성능`이 선택되도록 변경하였습니다.   
 
 업데이트(2026-06-13): 이제 `Windows11_Optimizer.cmd`로 통합되었습니다. 글꼴 가장자리 처리를 해제하였습니다.  
