@@ -597,42 +597,162 @@ function Set-ActivePowerSchemeAndVerify {
     return $false
 }
 
+
+function Get-WindowsPowerModeOverlayGuid {
+    param([Parameter(Mandatory)][ValidateSet("Balanced", "BestPowerEfficiency", "BetterPerformance", "BestPerformance")][string]$Mode)
+
+    switch ($Mode) {
+        "Balanced"            { return "00000000-0000-0000-0000-000000000000" }
+        "BestPowerEfficiency" { return "961cc777-2547-4f9d-8174-7d86181b8a7a" }
+        "BetterPerformance"   { return "00000000-0000-0000-0000-000000000000" }
+        "BestPerformance"     { return "ded574b5-45a0-4f42-8737-46345c09c238" }
+    }
+}
+
+function Get-WindowsPowerModeOverlayAlias {
+    param([Parameter(Mandatory)][ValidateSet("Balanced", "BestPowerEfficiency", "BetterPerformance", "BestPerformance")][string]$Mode)
+
+    switch ($Mode) {
+        "Balanced"            { return "OVERLAY_SCHEME_NONE" }
+        "BestPowerEfficiency" { return "OVERLAY_SCHEME_MIN" }
+        "BetterPerformance"   { return "OVERLAY_SCHEME_NONE" }
+        "BestPerformance"     { return "OVERLAY_SCHEME_MAX" }
+    }
+}
+
+function Get-WindowsPowerModeOverlayCurrentText {
+    <#
+        Read the current Windows power mode overlay by powercfg only.
+        Do not call undocumented DLL APIs and do not write protected HKLM registry values.
+    #>
+
+    $qOut = & powercfg.exe /q OVERLAY_SCHEME_CURRENT 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        return (Join-NativeOutput $qOut)
+    }
+
+    $qOut2 = & powercfg.exe /query OVERLAY_SCHEME_CURRENT 2>&1
+    if ($LASTEXITCODE -eq 0) {
+        return (Join-NativeOutput $qOut2)
+    }
+
+    return $null
+}
+
+function Test-WindowsPowerModeOverlayActive {
+    param([Parameter(Mandatory)][ValidateSet("Balanced", "BestPowerEfficiency", "BetterPerformance", "BestPerformance")][string]$Mode)
+
+    $targetGuid = (Get-WindowsPowerModeOverlayGuid -Mode $Mode).ToLowerInvariant()
+    $targetAlias = Get-WindowsPowerModeOverlayAlias -Mode $Mode
+    $currentText = Get-WindowsPowerModeOverlayCurrentText
+
+    if ([string]::IsNullOrWhiteSpace($currentText)) {
+        return $false
+    }
+
+    if ($currentText.ToLowerInvariant().Contains($targetGuid)) {
+        return $true
+    }
+
+    if ($currentText -match [regex]::Escape($targetAlias)) {
+        return $true
+    }
+
+    # Some builds report only localized display names rather than the alias/GUID.
+    if ($Mode -eq "BestPerformance" -and $currentText -match '(?i)best\s+performance|최고\s*의?\s*성능') {
+        return $true
+    }
+    if ($Mode -eq "Balanced" -and $currentText -match '(?i)recommended|balanced|권장|균형') {
+        return $true
+    }
+
+    return $false
+}
+
+function Set-WindowsPowerModeOverlayAc {
+    param(
+        [Parameter(Mandatory)][ValidateSet("Balanced", "BestPowerEfficiency", "BetterPerformance", "BestPerformance")][string]$Mode,
+        [string]$DisplayName = "Windows power mode"
+    )
+
+    $alias = Get-WindowsPowerModeOverlayAlias -Mode $Mode
+    $guid = (Get-WindowsPowerModeOverlayGuid -Mode $Mode).ToLowerInvariant()
+
+    # Correct power-mode path: use powercfg /overlaysetactive.
+    # Do not use /setacvalueindex scheme_current overlay <settingGuid> <overlayGuid>.
+    # That command treats the last argument as a numeric setting index on many Windows builds
+    # and returns "value format is incorrect or out of range."
+    # Do not call undocumented powrprof.dll overlay APIs; they can crash powershell.exe.
+    # Do not write HKLM:\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes directly.
+
+    $attempts = @(
+        @($alias),
+        @($guid)
+    )
+
+    $messages = New-Object System.Collections.Generic.List[string]
+    foreach ($args in $attempts) {
+        $out = & powercfg.exe /overlaysetactive @args 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "$DisplayName command succeeded: powercfg /overlaysetactive $($args -join ' ')"
+            Start-Sleep -Milliseconds 300
+            if (Test-WindowsPowerModeOverlayActive -Mode $Mode) {
+                Write-Host "$DisplayName verified by powercfg query."
+            }
+            else {
+                Write-Host "$DisplayName command completed. Reopen Settings or reboot if the UI has not refreshed yet."
+            }
+            return $true
+        }
+        $messages.Add("powercfg /overlaysetactive $($args -join ' ') :: $(Join-NativeOutput $out)")
+    }
+
+    Write-Warning "$DisplayName could not be changed with powercfg /overlaysetactive."
+    foreach ($message in $messages) { Write-Warning $message }
+    Write-Warning "The script did not call undocumented DLL APIs and did not write protected HKLM overlay registry values."
+    return $false
+}
+
+function Enable-SettingsBestPerformancePowerModeOnAC {
+    Write-Step "Applying Windows Settings Power mode: Best performance on AC power"
+    if (-not (Test-ACPowerOnline)) {
+        Write-Host "Windows Settings power mode activation skipped because AC power was not confirmed. DC power mode was not changed."
+        return $false
+    }
+
+    # Windows Settings > System > Power & battery > Power mode is available with the Balanced base plan.
+    # Do not activate the legacy Control Panel High Performance plan for menu item 1.
+    $balancedGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
+    if (-not (Set-ActivePowerSchemeAndVerify -Guid $balancedGuid -DisplayName "Balanced base scheme for Windows power mode")) {
+        Write-Warning "Balanced base power scheme could not be activated. Windows Settings power mode may not be available."
+        return $false
+    }
+
+    return Set-WindowsPowerModeOverlayAc -Mode "BestPerformance" -DisplayName "Windows Settings power mode: Best performance"
+}
+
 function Read-PowerPlanOptimizationChoice {
     Write-Host ""
-    Write-Host "전원 계획을 선택하십시오." -ForegroundColor Yellow
-    Write-Host " 1. 고성능"
-    Write-Host " 2. 최고의 성능"
+    Write-Host "전원 최적화 방식을 선택하십시오." -ForegroundColor Yellow
+    Write-Host " 1. 고성능 - Windows 설정 > 시스템 > 전원 및 배터리 > 전원 모드: 최고의 성능"
+    Write-Host " 2. 최고의 성능 - 제어판 전원 관리 옵션 / Ultimate Performance 전원 계획"
     Write-Host "취소하려면 Esc 또는 n을 누르십시오."
 
     while ($true) {
         $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
         if ($key.VirtualKeyCode -eq 27) { Write-Host "취소되었습니다."; return "Cancel" }
         $ch = [string]$key.Character
-        if ($ch -eq "1") { Write-Host "고성능을 선택했습니다."; return "HighPerformance" }
-        if ($ch -eq "2") { Write-Host "최고의 성능을 선택했습니다."; return "UltimatePerformance" }
+        if ($ch -eq "1") { Write-Host "고성능을 선택했습니다. Windows 설정의 전원 모드를 최고의 성능으로 설정합니다."; return "HighPerformance" }
+        if ($ch -eq "2") { Write-Host "최고의 성능을 선택했습니다. Ultimate Performance 전원 계획을 설정합니다."; return "UltimatePerformance" }
         if ($ch -match '^[nN]$') { Write-Host "취소되었습니다."; return "Cancel" }
         Write-Host "잘못된 입력입니다. 1, 2, n, Esc 중 하나를 누르십시오."
     }
 }
 
 function Enable-HighPerformanceOnAC {
-    Write-Step "Applying High Performance power scheme on AC power only"
-    if (-not (Test-ACPowerOnline)) {
-        Write-Host "High Performance activation skipped because AC power was not confirmed. DC power policy was not changed."
-        return $false
-    }
-
-    $targetGuid = Get-OrCreateHighPerformanceScheme
-    if ([string]::IsNullOrWhiteSpace($targetGuid)) {
-        Write-Warning "High Performance scheme could not be created or found. Active power scheme was not changed."
-        return $false
-    }
-
-    if (Set-ActivePowerSchemeAndVerify -Guid $targetGuid -DisplayName "High Performance") {
-        Write-Host "High Performance active on AC power: $targetGuid"
-        return $true
-    }
-    return $false
+    # Menu item 1 intentionally uses the Windows 11 Settings power mode overlay,
+    # not the legacy Control Panel High Performance power plan.
+    return Enable-SettingsBestPerformancePowerModeOnAC
 }
 
 function Enable-UltimatePerformanceOnAC {
@@ -656,9 +776,10 @@ function Enable-UltimatePerformanceOnAC {
 }
 
 function Restore-BalancedPowerScheme {
-    Write-Step "Restoring Balanced power scheme"
+    Write-Step "Restoring Balanced power scheme and Windows power mode"
     $balancedGuid = "381b4222-f694-41f0-9685-ff5bb260df2e"
     [void](Set-ActivePowerSchemeAndVerify -Guid $balancedGuid -DisplayName "Balanced")
+    [void](Set-WindowsPowerModeOverlayAc -Mode "Balanced" -DisplayName "Windows Settings power mode: Balanced")
     Write-Host "Balanced power scheme restore command was issued: $balancedGuid"
 
     if ($RemoveUltimatePerformanceSchemes) {
@@ -1001,6 +1122,7 @@ function Backup-CurrentRegistryState {
         "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config",
         "HKLM\SOFTWARE\Policies\Microsoft\Dsh",
         "HKLM\SOFTWARE\Policies\Microsoft\Windows\SettingSync",
+        "HKLM\SYSTEM\CurrentControlSet\Control\Power\User\PowerSchemes",
         "HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
     )
     foreach ($k in $keysToBackup) { Export-RegKey $k }
