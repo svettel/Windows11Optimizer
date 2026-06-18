@@ -2,29 +2,25 @@
 setlocal EnableExtensions
 chcp 65001 >nul
 
-echo Windows One Click Optimizer - Group Toggle
-echo e-mail : s_vettel@naver.com
-echo.
 set "__SELF=%~f0"
 set "__SELFDIR=%~dp0"
 set "__TEMPPS=%TEMP%\Win11_GroupToggle_%RANDOM%%RANDOM%.ps1"
 
 fltmc >nul 2>&1
 if errorlevel 1 (
-    echo Requesting administrator privileges...
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $p = $env:__SELF; $d = $env:__SELFDIR; $q = [char]34; $args = @('/k','call',($q + $p + $q)); Start-Process -FilePath $env:ComSpec -ArgumentList $args -WorkingDirectory $d -Verb RunAs; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "try { $p = [System.IO.Path]::GetFullPath($env:__SELF); $d = Split-Path -Parent $p; function Q([string]$s) { return ([char]34 + ($s -replace [char]34, ([char]92 + [char]34)) + [char]34) }; $wt = (Get-Command wt.exe -ErrorAction SilentlyContinue | Select-Object -First 1).Source; if ($wt) { $wtArgs = 'new-tab --title ' + (Q 'Windows11 Optimizer') + ' -d ' + (Q $d) + ' -- cmd.exe /c call ' + (Q $p); Start-Process -FilePath $wt -ArgumentList $wtArgs -Verb RunAs; } else { $cmdArgs = '/c call ' + (Q $p); Start-Process -FilePath $env:ComSpec -ArgumentList $cmdArgs -WorkingDirectory $d -Verb RunAs; }; exit 0 } catch { Write-Host $_.Exception.Message; exit 1 }"
     if errorlevel 1 (
         echo Failed to request administrator privileges or the request was cancelled.
         echo Press any key to close.
         pause >nul
         exit /b 1
     )
-    echo Elevated administrator window was requested.
-    echo If a new administrator window did not open, run this file from an elevated Command Prompt.
-    echo Press any key to close this non-administrator window.
-    pause >nul
-    exit /b
+    exit /b 0
 )
+
+echo Windows One Click Optimizer - Group Toggle
+echo e-mail : s_vettel@naver.com
+echo.
 
 rem Read this UTF-8 batch file explicitly; Windows PowerShell 5.1 Get-Content defaults to ANSI without BOM.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "$utf8In = New-Object System.Text.UTF8Encoding($false, $true); $utf8Out = New-Object System.Text.UTF8Encoding($true); $content = [System.IO.File]::ReadAllText($env:__SELF, $utf8In); $marker = '# POWER' + 'SHELL_START'; $idx = $content.LastIndexOf($marker); if ($idx -lt 0) { throw 'POWERSHELL_START marker not found.' }; $ps = $content.Substring($idx + $marker.Length).TrimStart([char]13,[char]10); [System.IO.File]::WriteAllText($env:__TEMPPS, $ps, $utf8Out)"
@@ -43,13 +39,14 @@ del "%__TEMPPS%" >nul 2>&1
 echo.
 if "%__RC%"=="0" (
     echo Completed.
+    exit /b 0
 ) else (
     echo Failed or completed with warnings. Exit code: %__RC%
+    echo.
+    echo Press any key to close.
+    pause >nul
+    exit /b %__RC%
 )
-echo.
-echo Press any key to close.
-pause >nul
-exit /b %__RC%
 
 # POWERSHELL_START
 
@@ -57,8 +54,6 @@ trap {
     Write-Host ""
     Write-Host "[FATAL] PowerShell payload stopped." -ForegroundColor Red
     Write-Host ("[FATAL] " + $_.Exception.Message) -ForegroundColor Red
-    Write-Host "Press any key to close."
-    try { $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown") } catch { }
     exit 1
 }
 
@@ -1254,7 +1249,6 @@ function Get-ServiceOptimizationItems {
         [pscustomobject]@{ Name = "ScDeviceEnum"; DisplayName = "Smart Card Device Enumeration Service" },
         [pscustomobject]@{ Name = "SCPolicySvc"; DisplayName = "Smart Card Removal Policy" },
         [pscustomobject]@{ Name = "CertPropSvc"; DisplayName = "Certificate Propagation" },
-        [pscustomobject]@{ Name = "WSearch"; DisplayName = "Windows Search" },
         [pscustomobject]@{ Name = "SEMgrSvc"; DisplayName = "Payments and NFC/SE Manager" }
     )
 }
@@ -1266,7 +1260,6 @@ function Get-ServiceRestoreItems {
         [pscustomobject]@{ Name = "ScDeviceEnum"; DisplayName = "Smart Card Device Enumeration Service"; StartupType = "Manual"; DelayedAuto = $false; StartService = $false },
         [pscustomobject]@{ Name = "SCPolicySvc"; DisplayName = "Smart Card Removal Policy"; StartupType = "Manual"; DelayedAuto = $false; StartService = $false },
         [pscustomobject]@{ Name = "CertPropSvc"; DisplayName = "Certificate Propagation"; StartupType = "Manual"; DelayedAuto = $false; StartService = $false },
-        [pscustomobject]@{ Name = "WSearch"; DisplayName = "Windows Search"; StartupType = "Automatic"; DelayedAuto = $true; StartService = $true },
         [pscustomobject]@{ Name = "SEMgrSvc"; DisplayName = "Payments and NFC/SE Manager"; StartupType = "Manual"; DelayedAuto = $false; StartService = $false }
     )
 }
@@ -1437,47 +1430,189 @@ function Restore-Group03 {
     }
 }
 
-function Apply-Group04 {
-    Write-ActionHeader "활성화/최적화" "4. Windows 검색 / Bing / Cortana / 클라우드 검색 / Store 검색 비활성화"
+function Read-SearchOptimizationChoice {
+    Write-Host ""
+    Write-Host "검색 최적화 방식을 선택하십시오." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host " 1. 기본 검색 최적화"
+    Write-Host "    - Bing / Cortana / 위치 기반 검색 / 웹 검색 비활성화"
+    Write-Host ""
+    Write-Host " 2. 클라우드 검색 비활성화"
+    Write-Host "    - Microsoft 계정 / Azure AD 클라우드 검색 비활성화"
+    Write-Host ""
+    Write-Host " 3. 검색 기록 / 동적 콘텐츠 / 검색 추천 비활성화"
+    Write-Host "    - 장치 검색 기록, 동적 검색 콘텐츠, 검색 상자 추천 비활성화"
+    Write-Host ""
+    Write-Host " 4. Windows Search 서비스 비활성화"
+    Write-Host "    - WSearch 서비스 중지 및 시작 유형 Disabled"
+    Write-Host "    - 개발자 PC 비권장"
+    Write-Host ""
+    Write-Host "취소하려면 Esc 또는 n을 누르십시오."
+
+    while ($true) {
+        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        if ($key.VirtualKeyCode -eq 27) { Write-Host "취소되었습니다."; return "Cancel" }
+        $ch = [string]$key.Character
+        if ($ch -eq "1") { Write-Host "4-1. 기본 검색 최적화를 선택했습니다."; return "Basic" }
+        if ($ch -eq "2") { Write-Host "4-2. 클라우드 검색 비활성화를 선택했습니다."; return "Cloud" }
+        if ($ch -eq "3") { Write-Host "4-3. 검색 기록 / 동적 콘텐츠 / 검색 추천 비활성화를 선택했습니다."; return "Suggestions" }
+        if ($ch -eq "4") { Write-Host "4-4. Windows Search 서비스 비활성화를 선택했습니다."; return "WSearch" }
+        if ($ch -match '^[nN]$') { Write-Host "취소되었습니다."; return "Cancel" }
+        Write-Host "잘못된 입력입니다. 1, 2, 3, 4, n, Esc 중 하나를 누르십시오."
+    }
+}
+
+function Read-SearchRestoreChoice {
+    Write-Host ""
+    Write-Host "검색 원복 방식을 선택하십시오." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host " 1. 4-1 기본 검색 최적화 원복"
+    Write-Host "    - Bing / Cortana / 위치 기반 검색 / 웹 검색 차단 정책 원복"
+    Write-Host ""
+    Write-Host " 2. 4-2 클라우드 검색 비활성화 원복"
+    Write-Host "    - Microsoft 계정 / Azure AD 클라우드 검색 차단 정책 원복"
+    Write-Host ""
+    Write-Host " 3. 4-3 검색 기록 / 동적 콘텐츠 / 검색 추천 비활성화 원복"
+    Write-Host "    - 장치 검색 기록, 동적 검색 콘텐츠, 검색 상자 추천 차단 정책 원복"
+    Write-Host ""
+    Write-Host " 4. 4-4 Windows Search 서비스 비활성화 원복"
+    Write-Host "    - WSearch 서비스를 Automatic(Delayed Start) 및 Running 상태로 원복"
+    Write-Host ""
+    Write-Host " 5. 4번 검색 최적화 전체 원복"
+    Write-Host "    - 4-1, 4-2, 4-3, 4-4 전체 원복"
+    Write-Host ""
+    Write-Host "취소하려면 Esc 또는 n을 누르십시오."
+
+    while ($true) {
+        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        if ($key.VirtualKeyCode -eq 27) { Write-Host "취소되었습니다."; return "Cancel" }
+        $ch = [string]$key.Character
+        if ($ch -eq "1") { Write-Host "4-1. 기본 검색 최적화 원복을 선택했습니다."; return "Basic" }
+        if ($ch -eq "2") { Write-Host "4-2. 클라우드 검색 비활성화 원복을 선택했습니다."; return "Cloud" }
+        if ($ch -eq "3") { Write-Host "4-3. 검색 기록 / 동적 콘텐츠 / 검색 추천 비활성화 원복을 선택했습니다."; return "Suggestions" }
+        if ($ch -eq "4") { Write-Host "4-4. Windows Search 서비스 원복을 선택했습니다."; return "WSearch" }
+        if ($ch -eq "5") { Write-Host "4번 검색 최적화 전체 원복을 선택했습니다."; return "All" }
+        if ($ch -match '^[nN]$') { Write-Host "취소되었습니다."; return "Cancel" }
+        Write-Host "잘못된 입력입니다. 1, 2, 3, 4, 5, n, Esc 중 하나를 누르십시오."
+    }
+}
+
+function Apply-SearchGroup41 {
+    Write-Step "Applying search subgroup 4-1: 기본 검색 최적화"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "BingSearchEnabled" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "CortanaConsent" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "AllowSearchToUseLocation" 0
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsMSACloudSearchEnabled" 0
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsAADCloudSearchEnabled" 0
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDeviceSearchHistoryEnabled" 0
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "SafeSearchMode" 0
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDynamicSearchBoxEnabled" 0
+
     Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCortana" 0
-    Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCloudSearch" 0
     Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowSearchToUseLocation" 0
     Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchUseWeb" 0
     Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "ConnectedSearchUseWebOverMeteredConnections" 0
     Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "DisableWebSearch" 1
-    Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "EnableDynamicContentInWSB" 0
-    Set-Dword "HKCU:\Software\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
-    Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
-    Set-Dword "HKCU:\Software\Policies\Microsoft\Windows\Explorer" "NoUseStoreOpenWith" 1
-    Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "NoUseStoreOpenWith" 1
 }
 
-function Restore-Group04 {
-    Write-ActionHeader "비활성화/원복" "4. Windows 검색 / Bing / Cortana / 클라우드 검색 / Store 검색 비활성화"
+function Restore-SearchGroup41 {
+    Write-Step "Restoring search subgroup 4-1: 기본 검색 최적화"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "BingSearchEnabled" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "CortanaConsent" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Search" "AllowSearchToUseLocation" 1
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsMSACloudSearchEnabled" 1
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsAADCloudSearchEnabled" 1
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDeviceSearchHistoryEnabled" 1
-    Remove-RegValue "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "SafeSearchMode"
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDynamicSearchBoxEnabled" 1
+
     $searchPolicyPath = "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search"
-    foreach ($name in @("AllowCortana", "AllowCloudSearch", "AllowSearchToUseLocation", "ConnectedSearchUseWeb", "ConnectedSearchUseWebOverMeteredConnections", "DisableWebSearch", "EnableDynamicContentInWSB")) {
+    foreach ($name in @("AllowCortana", "AllowSearchToUseLocation", "ConnectedSearchUseWeb", "ConnectedSearchUseWebOverMeteredConnections", "DisableWebSearch")) {
         Remove-RegValue $searchPolicyPath $name
     }
+}
+
+function Apply-SearchGroup42 {
+    Write-Step "Applying search subgroup 4-2: 클라우드 검색 비활성화"
+    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsMSACloudSearchEnabled" 0
+    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsAADCloudSearchEnabled" 0
+    Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCloudSearch" 0
+}
+
+function Restore-SearchGroup42 {
+    Write-Step "Restoring search subgroup 4-2: 클라우드 검색 비활성화"
+    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsMSACloudSearchEnabled" 1
+    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsAADCloudSearchEnabled" 1
+    Remove-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "AllowCloudSearch"
+}
+
+function Apply-SearchGroup43 {
+    Write-Step "Applying search subgroup 4-3: 검색 기록 / 동적 콘텐츠 / 검색 추천 비활성화"
+    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDeviceSearchHistoryEnabled" 0
+    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDynamicSearchBoxEnabled" 0
+    Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "EnableDynamicContentInWSB" 0
+    Set-Dword "HKCU:\Software\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
+    Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions" 1
+}
+
+function Restore-SearchGroup43 {
+    Write-Step "Restoring search subgroup 4-3: 검색 기록 / 동적 콘텐츠 / 검색 추천 비활성화"
+    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDeviceSearchHistoryEnabled" 1
+    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\SearchSettings" "IsDynamicSearchBoxEnabled" 1
+    Remove-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search" "EnableDynamicContentInWSB"
     Remove-RegValue "HKCU:\Software\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions"
     Remove-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "DisableSearchBoxSuggestions"
+
+    # Legacy cleanup from older builds: Store-based Open With lookup is no longer part of search optimization grouping.
     Remove-RegValue "HKCU:\Software\Policies\Microsoft\Windows\Explorer" "NoUseStoreOpenWith"
     Remove-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Explorer" "NoUseStoreOpenWith"
+}
+
+function Apply-SearchGroup44 {
+    Write-Step "Applying search subgroup 4-4: Windows Search 서비스 비활성화"
+    Write-Warning "Windows Search 서비스 비활성화는 개발자 PC에서 Visual Studio / VS Code / 파일 탐색기 검색에 영향을 줄 수 있습니다."
+    Disable-AndStopService -Name "WSearch" -DisplayName "Windows Search"
+}
+
+function Restore-SearchGroup44 {
+    Write-Step "Restoring search subgroup 4-4: Windows Search 서비스"
+    Set-ServiceRestoreState -Name "WSearch" -DisplayName "Windows Search" -StartupType "Automatic" -DelayedAuto $true -StartService $true
+}
+
+function Apply-Group04 {
+    Write-ActionHeader "활성화/최적화" "4. Windows 검색 최적화"
+    $searchChoice = Read-SearchOptimizationChoice
+    if ($searchChoice -eq "Cancel") {
+        $script:GroupActionCanceled = $true
+        return
+    }
+
+    switch ($searchChoice) {
+        "Basic"       { Apply-SearchGroup41 }
+        "Cloud"       { Apply-SearchGroup42 }
+        "Suggestions" { Apply-SearchGroup43 }
+        "WSearch"     { Apply-SearchGroup44 }
+    }
+}
+
+function Restore-Group04 {
+    Write-ActionHeader "비활성화/원복" "4. Windows 검색 최적화"
+    $searchChoice = Read-SearchRestoreChoice
+    if ($searchChoice -eq "Cancel") {
+        $script:GroupActionCanceled = $true
+        return
+    }
+
+    switch ($searchChoice) {
+        "Basic" {
+            Restore-SearchGroup41
+        }
+        "Cloud" {
+            Restore-SearchGroup42
+        }
+        "Suggestions" {
+            Restore-SearchGroup43
+        }
+        "WSearch" {
+            Restore-SearchGroup44
+        }
+        "All" {
+            Restore-SearchGroup41
+            Restore-SearchGroup42
+            Restore-SearchGroup43
+            Restore-SearchGroup44
+        }
+    }
 }
 
 function Apply-Group05 {
@@ -1695,7 +1830,7 @@ $Groups = @(
     [pscustomobject]@{ No = 1;  Title = "개인정보 / 추천 / 광고 관련 기능 비활성화"; Apply = "Apply-Group01"; Restore = "Restore-Group01" },
     [pscustomobject]@{ No = 2;  Title = "피드백 및 진단 데이터 관련 설정 조정"; Apply = "Apply-Group02"; Restore = "Restore-Group02" },
     [pscustomobject]@{ No = 3;  Title = "계정 / Windows 백업 / 내 앱 기억하기 비활성화"; Apply = "Apply-Group03"; Restore = "Restore-Group03" },
-    [pscustomobject]@{ No = 4;  Title = "Windows 검색 / Bing / Cortana / 클라우드 검색 / Store 검색 비활성화"; Apply = "Apply-Group04"; Restore = "Restore-Group04" },
+    [pscustomobject]@{ No = 4;  Title = "Windows 검색 최적화(4-1~4-4 하위 선택)"; Apply = "Apply-Group04"; Restore = "Restore-Group04" },
     [pscustomobject]@{ No = 5;  Title = "지정 Windows 서비스 비활성화 및 중지"; Apply = "Apply-Group05"; Restore = "Restore-Group05" },
     [pscustomobject]@{ No = 6;  Title = "Windows Update 배달 최적화 비활성화"; Apply = "Apply-Group06"; Restore = "Restore-Group06" },
     [pscustomobject]@{ No = 7;  Title = "전원 설정 조정"; Apply = "Apply-Group07"; Restore = "Restore-Group07" },
