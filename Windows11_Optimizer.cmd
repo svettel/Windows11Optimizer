@@ -1182,7 +1182,8 @@ function Refresh-PoliciesAndShell {
         [switch]$SkipGpUpdate,
         [switch]$SkipShellRestart
     )
-    Write-Step "Refreshing policies and restarting shell components"
+
+    Write-Step "Refreshing policies"
 
     if (-not $SkipGpUpdate) {
         Invoke-GpUpdateSafe -Target "computer"
@@ -1192,16 +1193,9 @@ function Refresh-PoliciesAndShell {
         Write-Host "Policy refresh skipped for this group."
     }
 
-    if (-not $SkipShellRestart) {
-        $procNames = @("explorer", "SearchHost", "StartMenuExperienceHost", "Widgets", "WidgetService")
-        foreach ($p in $procNames) {
-            Get-Process -Name $p -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-        }
-        Start-Process explorer.exe
-    }
-    else {
-        Write-Host "Shell restart skipped for this group."
-    }
+    # Do not restart explorer.exe or shell-related processes after each group action.
+    # Changes that require shell/session reload are intentionally deferred to user reboot.
+    Write-Host "Explorer/shell restart was skipped. Reboot the computer to fully apply pending UI changes."
 }
 
 function Backup-CurrentRegistryState {
@@ -1894,10 +1888,10 @@ function Invoke-GroupAction {
         }
         if ($Group.No -eq 7 -or $Group.No -eq 8) {
             if ($Group.No -eq 7) {
-                Write-Host "Power settings do not require gpupdate or shell restart. Post-action refresh was skipped."
+                Write-Host "Power settings do not require gpupdate. Explorer/shell restart is deferred to reboot."
             }
             elseif ($Group.No -eq 8) {
-                Write-Host "MMAgent settings do not require gpupdate or shell restart. Post-action refresh was skipped."
+                Write-Host "MMAgent settings do not require gpupdate. Explorer/shell restart is deferred to reboot."
             }
         }
         else {
