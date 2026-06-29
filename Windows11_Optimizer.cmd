@@ -270,42 +270,6 @@ function Invoke-SystemParametersInfoBool {
 }
 
 
-function Invoke-SystemParametersInfoAnimation {
-    param(
-        [Parameter(Mandatory)][bool]$Enabled,
-        [string]$Label = "Animation effects"
-    )
-    try {
-        if (-not ("Win32.AnimationNativeMethods" -as [type])) {
-            Add-Type -Namespace Win32 -Name AnimationNativeMethods -MemberDefinition @"
-[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-public struct ANIMATIONINFO {
-    public uint cbSize;
-    public int iMinAnimate;
-}
-
-[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
-public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref ANIMATIONINFO pvParam, uint fWinIni);
-"@ -ErrorAction Stop
-        }
-        $SPI_SETANIMATION = [uint32]0x0049
-        $SPIF_UPDATEINIFILE = [uint32]0x01
-        $SPIF_SENDCHANGE = [uint32]0x02
-        $flags = $SPIF_UPDATEINIFILE -bor $SPIF_SENDCHANGE
-        $animInfo = New-Object Win32.AnimationNativeMethods+ANIMATIONINFO
-        $animInfo.cbSize = [uint32][Runtime.InteropServices.Marshal]::SizeOf([type][Win32.AnimationNativeMethods+ANIMATIONINFO])
-        $animInfo.iMinAnimate = if ($Enabled) { 1 } else { 0 }
-        $ok = [Win32.AnimationNativeMethods]::SystemParametersInfo($SPI_SETANIMATION, $animInfo.cbSize, [ref]$animInfo, $flags)
-        if (-not $ok) {
-            $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
-            Write-Warning "SystemParametersInfo failed: $Label :: Win32Error=$err"
-        }
-    }
-    catch {
-        Write-Warning "SystemParametersInfo skipped: $Label :: $(Get-ErrorText $_)"
-    }
-}
-
 function Test-ACPowerOnline {
     <#
         AC 전원 연결 여부를 여러 소스에서 교차 확인한다.
@@ -730,7 +694,6 @@ function Read-PowerPlanOptimizationChoice {
     Write-Host ""
     Write-Host "전원 최적화 방식을 선택하십시오." -ForegroundColor Yellow
     Write-Host " 1. 고성능 - Windows 설정 > 시스템 > 전원 및 배터리 > 전원 모드: 최고의 성능"
-    Write-Host " 2. 최고의 성능 - 제어판 전원 관리 옵션 / Ultimate Performance 전원 계획"
     Write-Host "취소하려면 Esc 또는 n을 누르십시오."
 
     while ($true) {
@@ -738,9 +701,8 @@ function Read-PowerPlanOptimizationChoice {
         if ($key.VirtualKeyCode -eq 27) { Write-Host "취소되었습니다."; return "Cancel" }
         $ch = [string]$key.Character
         if ($ch -eq "1") { Write-Host "고성능을 선택했습니다. Windows 설정의 전원 모드를 최고의 성능으로 설정합니다."; return "HighPerformance" }
-        if ($ch -eq "2") { Write-Host "최고의 성능을 선택했습니다. Ultimate Performance 전원 계획을 설정합니다."; return "UltimatePerformance" }
         if ($ch -match '^[nN]$') { Write-Host "취소되었습니다."; return "Cancel" }
-        Write-Host "잘못된 입력입니다. 1, 2, n, Esc 중 하나를 누르십시오."
+        Write-Host "잘못된 입력입니다. 1, n, Esc 중 하나를 누르십시오."
     }
 }
 
@@ -1649,9 +1611,6 @@ function Apply-Group07 {
     if ($powerChoice -eq "HighPerformance") {
         $ok = Enable-HighPerformanceOnAC
     }
-    elseif ($powerChoice -eq "UltimatePerformance") {
-        $ok = Enable-UltimatePerformanceOnAC
-    }
 
     if (-not $ok) {
         $script:GroupActionFailed = $true
@@ -1723,7 +1682,9 @@ function Restore-Group11 {
 }
 
 function Apply-Group12 {
-    Write-ActionHeader "활성화/최적화" "12. 접근성 / 시각 효과 / 투명 효과 및 애니메이션 효과 비활성화"
+    Write-ActionHeader "활성화/최적화" "12. 시각효과(고급시스템설정-성능-시각 효과)"
+    # Accessibility > Visual effects > Animation effects is intentionally not modified.
+    # The previous MinAnimate / TaskbarAnimations / SystemParametersInfo animation path did not reliably control that Settings toggle.
     # Do not modify "Smooth edges of screen fonts".
     # FontSmoothing, FontSmoothingType, SPI_SETFONTSMOOTHING, and UserPreferencesMask are intentionally untouched.
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" "VisualFXSetting" 3
@@ -1734,15 +1695,13 @@ function Apply-Group12 {
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewAlphaSelect" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewShadow" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\DWM" "AlwaysHibernateThumbnails" 0
-    Set-StringValue "HKCU:\Control Panel\Desktop\WindowMetrics" "MinAnimate" "0"
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarAnimations" 0
-    Invoke-SystemParametersInfoAnimation -Enabled $false -Label "Animation effects"
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" "EnableTransparency" 0
     Invoke-SystemParametersInfoBool -Action 0x0025 -Value $true -Label "Show window contents while dragging"
 }
 
 function Restore-Group12 {
-    Write-ActionHeader "비활성화/원복" "12. 접근성 / 시각 효과 / 투명 효과 및 애니메이션 효과 비활성화"
+    Write-ActionHeader "비활성화/원복" "12. 시각효과(고급시스템설정-성능-시각 효과)"
+    # Accessibility > Visual effects > Animation effects is intentionally not modified.
+    # The previous MinAnimate / TaskbarAnimations / SystemParametersInfo animation path did not reliably control that Settings toggle.
     # Do not modify "Smooth edges of screen fonts".
     # FontSmoothing, FontSmoothingType, SPI_SETFONTSMOOTHING, and UserPreferencesMask are intentionally untouched.
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects" "VisualFXSetting" 0
@@ -1751,17 +1710,179 @@ function Restore-Group12 {
     Set-StringValue "HKCU:\Control Panel\Desktop" "DragFullWindows" "1"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "IconsOnly" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewAlphaSelect" 1
-    Set-StringValue "HKCU:\Control Panel\Desktop\WindowMetrics" "MinAnimate" "1"
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "TaskbarAnimations" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ListviewShadow" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\DWM" "AlwaysHibernateThumbnails" 0
-    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" "EnableTransparency" 1
-    Invoke-SystemParametersInfoAnimation -Enabled $true -Label "Animation effects"
     Invoke-SystemParametersInfoBool -Action 0x0025 -Value $true -Label "Show window contents while dragging"
 }
 
+function Read-AccessibilityVisualEffectsChoice {
+    param([Parameter(Mandatory)][ValidateSet("Apply","Restore")][string]$Mode)
+
+    Write-Host ""
+    if ($Mode -eq "Apply") {
+        Write-Host "시각효과(설정-접근성-시각효과) 최적화 항목을 선택하십시오." -ForegroundColor Yellow
+        Write-Host " 1. 투명 효과 비활성화"
+        Write-Host " 2. 애니메이션 효과 비활성화"
+    }
+    else {
+        Write-Host "시각효과(설정-접근성-시각효과) 원복 항목을 선택하십시오." -ForegroundColor Yellow
+        Write-Host " 1. 투명 효과 활성화"
+        Write-Host " 2. 애니메이션 효과 활성화"
+    }
+
+    Write-Host ""
+    Write-Host "취소하려면 Esc 또는 n을 누르십시오."
+
+    while ($true) {
+        $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+        if ($key.VirtualKeyCode -eq 27) { Write-Host "취소되었습니다."; return "Cancel" }
+        $ch = [string]$key.Character
+        if ($ch -eq "1") { Write-Host "투명 효과 항목을 선택했습니다."; return "Transparency" }
+        if ($ch -eq "2") { Write-Host "애니메이션 효과 항목을 선택했습니다."; return "Animation" }
+        if ($ch -match '^[nN]$') { Write-Host "취소되었습니다."; return "Cancel" }
+        Write-Host "잘못된 입력입니다. 1, 2, n, Esc 중 하나를 누르십시오."
+    }
+}
+
+function Set-AccessibilityTransparencyEffect {
+    param([Parameter(Mandatory)][bool]$Enabled)
+
+    $value = if ($Enabled) { 1 } else { 0 }
+    $state = if ($Enabled) { "Enabled" } else { "Disabled" }
+
+    # Settings > Accessibility > Visual effects > Transparency effects.
+    Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize" "EnableTransparency" $value
+    Write-Host "Accessibility transparency effects: $state"
+}
+
+function Ensure-ClientAreaAnimationNativeType {
+    if (-not ("Win11ClientAreaAnimationNative" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class Win11ClientAreaAnimationNative {
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern bool SystemParametersInfo(UInt32 uiAction, UInt32 uiParam, IntPtr pvParam, UInt32 fWinIni);
+}
+"@ -ErrorAction Stop
+    }
+}
+
+function Get-AccessibilityClientAreaAnimationEffect {
+    $SPI_GETCLIENTAREAANIMATION = 0x1042
+    $ptr = [IntPtr]::Zero
+
+    try {
+        Ensure-ClientAreaAnimationNativeType
+        $ptr = [System.Runtime.InteropServices.Marshal]::AllocHGlobal(4)
+        [System.Runtime.InteropServices.Marshal]::WriteInt32($ptr, 0)
+
+        $ok = [Win11ClientAreaAnimationNative]::SystemParametersInfo(
+            [uint32]$SPI_GETCLIENTAREAANIMATION,
+            [uint32]0,
+            $ptr,
+            [uint32]0
+        )
+
+        if (-not $ok) {
+            $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-Warning "SPI_GETCLIENTAREAANIMATION failed. Win32Error=$err"
+            return $null
+        }
+
+        return ([System.Runtime.InteropServices.Marshal]::ReadInt32($ptr) -ne 0)
+    }
+    catch {
+        Write-Warning "SPI_GETCLIENTAREAANIMATION query failed: $(Get-ErrorText $_)"
+        return $null
+    }
+    finally {
+        if ($ptr -ne [IntPtr]::Zero) {
+            [System.Runtime.InteropServices.Marshal]::FreeHGlobal($ptr)
+        }
+    }
+}
+
+function Set-AccessibilityAnimationEffect {
+    param([Parameter(Mandatory)][bool]$Enabled)
+
+    # Settings > Accessibility > Visual effects > Animation effects.
+    # Uses the documented client-area animation parameter.
+    $SPI_SETCLIENTAREAANIMATION = 0x1043
+    $SPIF_UPDATEINIFILE = 0x0001
+    $SPIF_SENDCHANGE = 0x0002
+
+    try {
+        Ensure-ClientAreaAnimationNativeType
+
+        $pvParam = if ($Enabled) { [IntPtr]1 } else { [IntPtr]0 }
+        $flags = [uint32]($SPIF_UPDATEINIFILE -bor $SPIF_SENDCHANGE)
+
+        $ok = [Win11ClientAreaAnimationNative]::SystemParametersInfo(
+            [uint32]$SPI_SETCLIENTAREAANIMATION,
+            [uint32]0,
+            $pvParam,
+            $flags
+        )
+
+        if (-not $ok) {
+            $err = [System.Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            Write-Warning "SPI_SETCLIENTAREAANIMATION failed. Win32Error=$err"
+            $script:GroupActionFailed = $true
+            return
+        }
+
+        $current = Get-AccessibilityClientAreaAnimationEffect
+        $state = if ($Enabled) { "Enabled" } else { "Disabled" }
+
+        if ($null -eq $current) {
+            Write-Host "Accessibility animation effects command issued: $state"
+        }
+        elseif ($current -eq $Enabled) {
+            Write-Host "Accessibility animation effects verified: $state"
+        }
+        else {
+            Write-Warning "Accessibility animation effects command completed but read-back did not match. Expected=$Enabled Current=$current"
+            $script:GroupActionFailed = $true
+        }
+    }
+    catch {
+        Write-Warning "Accessibility animation effects update failed: $(Get-ErrorText $_)"
+        $script:GroupActionFailed = $true
+    }
+}
+
 function Apply-Group13 {
-    Write-ActionHeader "활성화/최적화" "13. 파일 탐색기 / 폴더 옵션 / 시작 위치 및 개인 정보 보호 설정"
+    Write-ActionHeader "활성화/최적화" "13. 시각효과(설정-접근성-시각효과)"
+    $visualChoice = Read-AccessibilityVisualEffectsChoice -Mode "Apply"
+    if ($visualChoice -eq "Cancel") {
+        $script:GroupActionCanceled = $true
+        return
+    }
+
+    switch ($visualChoice) {
+        "Transparency" { Set-AccessibilityTransparencyEffect -Enabled $false }
+        "Animation"    { Set-AccessibilityAnimationEffect -Enabled $false }
+    }
+}
+
+function Restore-Group13 {
+    Write-ActionHeader "비활성화/원복" "13. 시각효과(설정-접근성-시각효과)"
+    $visualChoice = Read-AccessibilityVisualEffectsChoice -Mode "Restore"
+    if ($visualChoice -eq "Cancel") {
+        $script:GroupActionCanceled = $true
+        return
+    }
+
+    switch ($visualChoice) {
+        "Transparency" { Set-AccessibilityTransparencyEffect -Enabled $true }
+        "Animation"    { Set-AccessibilityAnimationEffect -Enabled $true }
+    }
+}
+
+function Apply-Group14 {
+    Write-ActionHeader "활성화/최적화" "14. 파일 탐색기 / 폴더 옵션 / 시작 위치 및 개인 정보 보호 설정"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowSyncProviderNotifications" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "LaunchTo" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowRecent" 0
@@ -1769,8 +1890,8 @@ function Apply-Group13 {
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowCloudFilesInQuickAccess" 0
 }
 
-function Restore-Group13 {
-    Write-ActionHeader "비활성화/원복" "13. 파일 탐색기 / 폴더 옵션 / 시작 위치 및 개인 정보 보호 설정"
+function Restore-Group14 {
+    Write-ActionHeader "비활성화/원복" "14. 파일 탐색기 / 폴더 옵션 / 시작 위치 및 개인 정보 보호 설정"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowSyncProviderNotifications" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "LaunchTo" 2
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowRecent" 1
@@ -1778,8 +1899,8 @@ function Restore-Group13 {
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" "ShowCloudFilesInQuickAccess" 1
 }
 
-function Apply-Group14 {
-    Write-ActionHeader "활성화/최적화" "14. 잠금 화면 추천 / 팁 / 상태 표시 비활성화"
+function Apply-Group15 {
+    Write-ActionHeader "활성화/최적화" "15. 잠금 화면 추천 / 팁 / 상태 표시 비활성화"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenEnabled" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenOverlayEnabled" 0
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338387Enabled" 0
@@ -1787,8 +1908,8 @@ function Apply-Group14 {
     Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "DisableWidgetsOnLockScreen" 1
 }
 
-function Restore-Group14 {
-    Write-ActionHeader "비활성화/원복" "14. 잠금 화면 추천 / 팁 / 상태 표시 비활성화"
+function Restore-Group15 {
+    Write-ActionHeader "비활성화/원복" "15. 잠금 화면 추천 / 팁 / 상태 표시 비활성화"
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenEnabled" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "RotatingLockScreenOverlayEnabled" 1
     Set-Dword "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" "SubscribedContent-338387Enabled" 1
@@ -1796,27 +1917,27 @@ function Restore-Group14 {
     Remove-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "DisableWidgetsOnLockScreen"
 }
 
-function Apply-Group15 {
-    Write-ActionHeader "활성화/최적화" "15. 작업 표시줄 위젯 비활성화"
+function Apply-Group16 {
+    Write-ActionHeader "활성화/최적화" "16. 작업 표시줄 위젯 비활성화"
     Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "AllowNewsAndInterests" 0
     Set-Dword "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "DisableWidgetsBoard" 1
     Write-Warning "TaskbarDa user toggle was skipped. Widgets policy is already applied."
 }
 
-function Restore-Group15 {
-    Write-ActionHeader "비활성화/원복" "15. 작업 표시줄 위젯 비활성화"
+function Restore-Group16 {
+    Write-ActionHeader "비활성화/원복" "16. 작업 표시줄 위젯 비활성화"
     Remove-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "AllowNewsAndInterests"
     Remove-RegValue "HKLM:\SOFTWARE\Policies\Microsoft\Dsh" "DisableWidgetsBoard"
     Write-Host "TaskbarDa direct write is intentionally not used; Widgets are restored by removing HKLM policies."
 }
 
-function Apply-Group16 {
-    Write-ActionHeader "활성화/최적화" "16. 날씨 / 뉴스 앱 제거"
+function Apply-Group17 {
+    Write-ActionHeader "활성화/최적화" "17. 날씨 / 뉴스 앱 제거"
     Remove-AppxByPatterns -Items (Get-WeatherNewsRemoveItems)
 }
 
-function Restore-Group16 {
-    Write-ActionHeader "비활성화/원복" "16. 날씨 / 뉴스 앱 제거"
+function Restore-Group17 {
+    Write-ActionHeader "비활성화/원복" "17. 날씨 / 뉴스 앱 제거"
     Restore-AppxByItems -Items (Get-WeatherNewsRestoreItems)
 }
 
@@ -1832,11 +1953,12 @@ $Groups = @(
     [pscustomobject]@{ No = 9;  Title = "Xbox Game Bar 관련 기능 비활성화"; Apply = "Apply-Group09"; Restore = "Restore-Group09" },
     [pscustomobject]@{ No = 10; Title = "Xbox / Game Bar 관련 앱 제거"; Apply = "Apply-Group10"; Restore = "Restore-Group10" },
     [pscustomobject]@{ No = 11; Title = "Family / Solitaire & Casual Games / Feedback Hub 앱 제거"; Apply = "Apply-Group11"; Restore = "Restore-Group11" },
-    [pscustomobject]@{ No = 12; Title = "접근성 / 시각 효과 / 투명 효과 및 애니메이션 효과 비활성화"; Apply = "Apply-Group12"; Restore = "Restore-Group12" },
-    [pscustomobject]@{ No = 13; Title = "파일 탐색기 / 폴더 옵션 / 시작 위치 및 개인 정보 보호 설정"; Apply = "Apply-Group13"; Restore = "Restore-Group13" },
-    [pscustomobject]@{ No = 14; Title = "잠금 화면 추천 / 팁 / 상태 표시 비활성화"; Apply = "Apply-Group14"; Restore = "Restore-Group14" },
-    [pscustomobject]@{ No = 15; Title = "작업 표시줄 위젯 비활성화"; Apply = "Apply-Group15"; Restore = "Restore-Group15" },
-    [pscustomobject]@{ No = 16; Title = "날씨 / 뉴스 앱 제거"; Apply = "Apply-Group16"; Restore = "Restore-Group16" }
+    [pscustomobject]@{ No = 12; Title = "시각효과(고급시스템설정-성능-시각 효과)"; Apply = "Apply-Group12"; Restore = "Restore-Group12" },
+    [pscustomobject]@{ No = 13; Title = "시각효과(설정-접근성-시각효과)"; Apply = "Apply-Group13"; Restore = "Restore-Group13" },
+    [pscustomobject]@{ No = 14; Title = "파일 탐색기 / 폴더 옵션 / 시작 위치 및 개인 정보 보호 설정"; Apply = "Apply-Group14"; Restore = "Restore-Group14" },
+    [pscustomobject]@{ No = 15; Title = "잠금 화면 추천 / 팁 / 상태 표시 비활성화"; Apply = "Apply-Group15"; Restore = "Restore-Group15" },
+    [pscustomobject]@{ No = 16; Title = "작업 표시줄 위젯 비활성화"; Apply = "Apply-Group16"; Restore = "Restore-Group16" },
+    [pscustomobject]@{ No = 17; Title = "날씨 / 뉴스 앱 제거"; Apply = "Apply-Group17"; Restore = "Restore-Group17" }
 )
 
 function Show-Menu {
@@ -1915,7 +2037,7 @@ while ($true) {
     if ($selection -match '^[qQ]$') { break }
     [int]$num = 0
     if (-not [int]::TryParse($selection, [ref]$num)) {
-        Write-Warning "숫자 1~16 또는 q만 입력하십시오."
+        Write-Warning "숫자 1~17 또는 q만 입력하십시오."
         continue
     }
     $group = $Groups | Where-Object { $_.No -eq $num } | Select-Object -First 1
